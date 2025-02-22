@@ -2,6 +2,8 @@
 /build/
 /out/
 /cmake-build-*/
+.cache/
+.idx
 
 # Conan
 /CMakeUserPresets.json
