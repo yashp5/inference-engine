@@ -68,7 +68,7 @@ def load_tokens(tokenizer_path, vocab_size):
     scores = [0] * vocab_size
     with open(tokenizer_path, "r") as f:
         tokenizer = json.load(f)
-    
+
     vocab = tokenizer["model"]["vocab"]
     assert len(vocab) <= vocab_size
 
@@ -77,7 +77,7 @@ def load_tokens(tokenizer_path, vocab_size):
 
     for added in tokenizer["added_tokens"]:
         tokens[added["id"]] = added["content"]
-    
+
     # Scores are negaitve merge indices so that earlier merges come first
     for i, m in enumerate(tokenizer["model"]["merges"]):
         t1, t2 = m.split()
@@ -122,7 +122,7 @@ if __name__ == "__main__":
         args.config = os.path.join(args.input, "config.json")
         if not os.path.exists(args.config):
             argp.error(f"config.json not found in {args.input}")
-        
+
         args.tokenizer = os.path.join(args.input, "tokenizer.json")
         if not os.path.exists(args.tokenizer):
             argp.error(f"tokenizer.json not found in {args.input}")
@@ -140,6 +140,8 @@ if __name__ == "__main__":
 
     tokens, scores = load_tokens(args.tokenizer, metadata.vocab_size)
     tensors = load_weights(args.models, args.dtype, metadata, config.get("tie_word_embeddings", None))
+    if not tensors:
+        argp.error(f"No tensors loaded from {args.models}")
 
     # add tokenizer tensors at the end (to maximize the chance of model tensor alignment)
     # note: we concatenate all bytes of all tokens into a single tensor
@@ -148,7 +150,3 @@ if __name__ == "__main__":
 
     print(f"Saving {len(tensors)} tensors to {args.output}")
     safetensors.torch.save_file(tensors, args.output, metadata=metadata.to_dict())
-
-            
-
-
