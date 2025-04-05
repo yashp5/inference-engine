@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -250,64 +251,203 @@ void Block::cuda() {
 }
 
 void Block::block(
-  InferenceState& s,  // inference state
-  int pos,            // index of the current token in the sequence
-  int kv_sink,        // number of sink tokens currently in the KV cache
-  int kv_pos,         // index of the current token in the kv cache, must be in [0..kv_len) since kv cache is a ring buffer
-  int kv_len          // number of tokens in the kv cache that we will attend over
+    InferenceState &s, // inference state
+    int pos,           // index of the current token in the sequence
+    int kv_sink,       // number of sink tokens currently in the KV cache
+    int kv_pos,        // index of the current token in the kv cache, must be in
+                       // [0..kv_len) since kv cache is a ring buffer
+    int kv_len // number of tokens in the kv cache that we will attend over
 ) const {
   if (_device == Device::CUDA) {
     switch (_config->weight_dtype) {
-      case DType::F32: {
-        _block_cuda<float>(s, pos, kv_sink, kv_pos, kv_len);
-        break;
-      }
-      case DType::F16: {
-        _block_cuda<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
-        break;
-      }
-      default: {
-        assert(false && "unsupported weight dtype for cuda");
-      }
+    case DType::F32: {
+      _block_cuda<float>(s, pos, kv_sink, kv_pos, kv_len);
+      break;
+    }
+    case DType::F16: {
+      _block_cuda<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
+      break;
+    }
+    default: {
+      assert(false && "unsupported weight dtype for cuda");
+    }
     }
   } else {
     switch (_config->weight_dtype) {
-      case DType::F32: {
-        _block_cpu<float>(s, pos, kv_sink, kv_pos, kv_len);
-        break;
-      }
-      case DType::F16: {
+    case DType::F32: {
+      _block_cpu<float>(s, pos, kv_sink, kv_pos, kv_len);
+      break;
+    }
+    case DType::F16: {
 #if defined(__AVX2__) && defined(__F16C__)
-        _block_cpu<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
+      _block_cpu<f16_t>(s, pos, kv_sink, kv_pos, kv_len);
 #else
-        assert(false && "float16 not supported on this platform");
+      assert(false && "float16 not supported on this platform");
 #endif
-        break;
-      }
-      default: {
-        assert(false && "unsupported weight dtype for cpu");
-      }
+      break;
+    }
+    default: {
+      assert(false && "unsupported weight dtype for cpu");
+    }
     }
   }
-
 }
 
-InferenceState::InferenceState(const std::shared_ptr<Config> config):
-_config(config){
-    assert(config);
-    _x = new float[config->dim]();
-    _xb = new float[config->dim]();
-    _xb2 = new float[config->dim]();
-    _hb = new float[config->hidden_dim]();
-    _hb2 = new float[config->hidden_dim]();
-    _q = new float[config->n_heads * config->head_dim]();
-    _k = new float[config->n_kv_heads * config->head_dim]();
-    _v = new float[config->n_kv_heads * config->head_dim]();
-    _att = new float[config->n_heads * config->max_seq_len]();
-    _logits = new float[config->vocab_size]();
-    if (config->n_experts > 0){
-        _moe_weights = new float[config->n_experts]();
-        _active_experts = new int[config->n_experts_active]();
-        _active_experts_weights = new float[config->n_experts_active]();
+InferenceState::InferenceState(const std::shared_ptr<Config> config)
+    : _config(config) {
+  assert(config);
+  _x = new float[config->dim]();
+  _xb = new float[config->dim]();
+  _xb2 = new float[config->dim]();
+  _hb = new float[config->hidden_dim]();
+  _hb2 = new float[config->hidden_dim]();
+  _q = new float[config->n_heads * config->head_dim]();
+  _k = new float[config->n_kv_heads * config->head_dim]();
+  _v = new float[config->n_kv_heads * config->head_dim]();
+  _att = new float[config->n_heads * config->max_seq_len]();
+  _logits = new float[config->vocab_size]();
+  if (config->n_experts > 0) {
+    _moe_weights = new float[config->n_experts]();
+    _active_experts = new int[config->n_experts_active]();
+    _active_experts_weights = new float[config->n_experts_active]();
+  }
+}
+
+void InferenceState::cuda() {
+  if (_device != Device::CPU) {
+    return;
+  }
+  _device = Device::CUDA;
+  init_cuda_stream(&_stream);
+  _x = static_cast<float *>(upload_cuda(_x, _config->dim * sizeof(float)));
+  _xb = static_cast<float *>(upload_cuda(_xb, _config->dim * sizeof(float)));
+  _xb2 = static_cast<float *>(upload_cuda(_xb2, _config->dim * sizeof(float)));
+  _hb = static_cast<float *>(
+      upload_cuda(_hb, _config->hidden_dim * sizeof(float)));
+  _hb2 = static_cast<float *>(
+      upload_cuda(_hb2, _config->hidden_dim * sizeof(float)));
+  _q = static_cast<float *>(
+      upload_cuda(_q, _config->n_heads * _config->head_dim * sizeof(float)));
+  _k = static_cast<float *>(
+      upload_cuda(_k, _config->n_heads * _config->head_dim * sizeof(float)));
+  _v = static_cast<float *>(
+      upload_cuda(_v, _config->n_heads * _config->head_dim * sizeof(float)));
+  _att = static_cast<float *>(upload_cuda(
+      _att, _config->n_heads * _config->max_seq_len * sizeof(float)));
+  register_cuda_host(_logits, _config->vocab_size * sizeof(float));
+  if (_moe_weights != nullptr) {
+    _moe_weights = static_cast<float *>(
+        upload_cuda(_moe_weights, _config->n_experts * sizeof(float)));
+    _active_experts = static_cast<int *>(
+        upload_cuda(_active_experts, _config->n_experts_active * sizeof(int)));
+    _active_experts_weights = static_cast<float *>(upload_cuda(
+        _active_experts_weights, _config->n_experts_active * sizeof(float)));
+  }
+}
+
+Model::Model(YALMData &yalm, int context) {
+  config = std::make_shared<Config>();
+  config->from_yalm(yalm, context);
+  std::cout << "loading model with dtype: "
+            << dtype_to_string(config->weight_dtype) << std::endl;
+
+  token_embedding_table =
+      check_tensor(get_tensor(yalm, "model.embed.weight"), config->weight_dtype,
+                   {config->vocab_size, config->dim, 0, 0});
+
+  for (int i = 0; i < config->n_layers; i++) {
+    blocks.emplace_back(std::make_shared<Block>(
+        i, config,
+        get_tensor(yalm, fmt::format("model.layers.{}.attn.norm.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.mlp.norm.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.attn.wq.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.attn.wk.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.attn.wv.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.attn.wo.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.mlp.w1.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.mlp.w2.weight", i)),
+        get_tensor(yalm, fmt::format("model.layers.{}.mlp.w3.weight", i)),
+        config->n_experts > 0
+            ? get_tensor(yalm, fmt::format("model.layers.{}.moegate.weight", i))
+            : nullptr));
+  }
+
+  rms_final_weight =
+      static_cast<float *>(check_tensor(get_tensor(yalm, "model.norm.weight"),
+                                        DType::F32, {config->dim, 0, 0, 0}));
+
+  bool tie_word_embeddings = yalm.tensors.count("model.output.weight") == 0;
+  if (tie_word_embeddings) {
+    wcls = token_embedding_table;
+  } else {
+    wcls = check_tensor(get_tensor(yalm, "model.output.weight"),
+                        config->weight_dtype,
+                        {config->vocab_size, config->dim, 0, 0});
+  }
+}
+
+void Model::cuda() {
+  if (_device != Device::CPU) {
+    return;
+  }
+  _device = Device::CUDA;
+  // TODO: support multiple CUDA devices
+  set_cuda_host(0);
+  size_t weight_size = dtype_size(config->weight_dtype);
+  token_embedding_table = upload_cuda(
+      token_embedding_table, config->vocab_size * config->dim * weight_size);
+  for (auto &block : blocks) {
+    block->cuda();
+  }
+  rms_final_weight = static_cast<float *>(
+      upload_cuda(rms_final_weight, config->dim * sizeof(float)));
+  wcls = upload_cuda(wcls, config->vocab_size * config->dim * weight_size);
+}
+
+void Model::forward(InferenceState &s, int token, int pos, InferenceMode mode) {
+  if (s.device() != _device) {
+    std::cerr << "FATAL: inference state device mismatch" << std::endl;
+    assert(false);
+    return;
+  }
+  if (_device == Device::CUDA) {
+    _forward_cuda(s, token, pos, mode);
+  } else {
+    _forward_cpu(s, token, pos, mode);
+  }
+}
+
+#if DEBUG_MODEL
+DebugTensor::DebugTensor(const std::vector<float> &data) {
+  data_f32 = data;
+  data_type = DataType::F32;
+}
+DebugTensor::DebugTensor(const std::vector<f16_t> &data) {
+  data_f16 = data;
+  data_type = DataType::F16;
+}
+
+float DebugTensor::max_err(const DebugTensor &other) const {
+  if (data_type != other.data_type) {
+    return -1;
+  }
+  if (data_type == DataType::F32) {
+    float max_err = 0;
+    for (size_t i = 0; i < data_f32.size(); i++) {
+      max_err = std::max(max_err, std::abs(data_f32[i] - other.data_f32[i]));
     }
+    return max_err;
+  } else {
+#if defined(__F16C__)
+    float max_err = 0;
+    for (size_t i = 0; i < data_f16.size(); i++) {
+      max_err = std::max(max_err, std::abs(_cvtsh_ss(data_f16[i]) -
+                                           _cvtsh_ss(other.data_f16[i])));
+    }
+    return max_err;
+#else
+    assert(false && "float16 not supported on this platform")
+#endif
+  }
 }
+#endif

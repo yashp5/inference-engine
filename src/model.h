@@ -263,6 +263,7 @@ struct Model {
 
   void forward(InferenceState &s, int token, int pos,
                InferenceMode mode = InferenceMode::OUTPUT_LOGITS);
+  void cuda();
 
 private:
   void _forward_cpu(InferenceState &s, int token, int pos, InferenceMode mode);
