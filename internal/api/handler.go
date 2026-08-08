@@ -111,6 +111,9 @@ func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	id, _ = uuid.NewV7()
+	reqBody.RequestId = id.String()
+
 	if errMsg := reqBody.validate(); errMsg != "" {
 		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{RequestId: requestId, Error: errMsg})
 		return
