@@ -11,11 +11,18 @@ import logging
 import os
 import signal
 import time
+from types import FrameType
+from typing import Iterator, Optional, cast
 
 from grpc_reflection.v1alpha import reflection
 import inference_pb2
 import inference_pb2_grpc
 from llama_cpp import Llama
+from llama_cpp.llama_types import (
+    CompletionUsage,
+    CreateCompletionResponse,
+    CreateCompletionStreamResponse,
+)
 
 import grpc
 
@@ -28,19 +35,41 @@ log = logging.getLogger("worker")
 
 # --- Config (overrride via env vars) ------------------------
 
-PORT = os.getenv("WORKER_PORT", "50051")
-MAX_WORKERS = int(os.getenv("WORKER_MAX_THREADS", "4"))
+PORT: str = os.getenv("WORKER_PORT", "50051")
+MAX_WORKERS: int = int(os.getenv("WORKER_MAX_THREADS", "4"))
+MODEL_PATH: str = os.getenv("MODEL_PATH", "/Users/yash/build/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
 
+
+def _validate_request(
+    request: inference_pb2.GenerateRequest, context: grpc.ServicerContext
+) -> bool:
+    """Shared validation for both RPCs. Returns False (and aborts) if invalid"""
+    if not request.request_id:
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, "request_id is required")
+        return False
+    if not request.prompt:
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, "prompt is required")
+        return False
+    if request.max_tokens <= 0:
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, "max_tokens must be > 0")
+        return False
+    if not (0.0 <= request.temperature <= 2.0):
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, "temperature must be between 0.0 and 2.0")
+        return False
+    return True
 
 class InferenceServicer(inference_pb2_grpc.InferenceServicer):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.llm = Llama(
-            model_path="/Users/yash/ml-infra/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        self.llm: Llama = Llama(
+            model_path=MODEL_PATH,
             n_ctx=512,
         )
 
-    def Generate(self, request, context):
+    # Unary RPC - waits for the full completion and returns response
+    def Generate(
+        self, request: inference_pb2.GenerateRequest, context: grpc.ServicerContext
+    ) -> inference_pb2.GenerateResponse:
         log.info(
             "Generate called request_id=%s prompt_len=%d max_tokens=%d temperature=%.2f",
             request.request_id,
@@ -49,61 +78,80 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
             request.temperature,
         )
 
-        # validate
-        if not request.request_id:
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "request_id is required")
+        if not _validate_request(request, context):
+            return inference_pb2.GenerateResponse()
 
-        if not request.prompt:
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "prompt is required")
-
-        if request.max_tokens <= 0:
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "max_tokens must be > 0")
-
-        if not (0.0 <= request.temperature <= 2.0):
-            context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT,
-                "temperature must be between 0.0 and 2.0",
-            )
-
-        # inference
-        start_ms = time.monotonic()
-
-        generated_text, tokens_generated = self._run_inference(
-            prompt=request.prompt,
-            max_tokens=request.max_tokens,
-            temperature=request.temperature,
+        start_ms: float = time.monotonic()
+        output = cast(
+            CreateCompletionResponse,
+            self.llm.create_completion(prompt=request.prompt, max_tokens=request.max_tokens, temperature=request.temperature, stream=False),
         )
+        inference_time_ms: int = int((time.monotonic()-start_ms) * 1000)
 
-        inference_time_ms = int((time.monotonic() - start_ms) * 1000)
-
-        # build response
-        log.info(
-            "Generate done request_id=%s tokens=%d latency_ms=%d",
-            request.request_id,
-            tokens_generated,
-            inference_time_ms,
+        generated_text: str = output["choices"][0]["text"]
+        usage: CompletionUsage = output.get("usage") or CompletionUsage(
+            prompt_tokens=0, completion_tokens=0, total_tokens=0
         )
+        tokens_generated: int = usage["completion_tokens"]
 
         return inference_pb2.GenerateResponse(
             request_id=request.request_id,
             generated_text=generated_text,
             tokens_generated=tokens_generated,
-            inference_time_ms=inference_time_ms,
+            inference_time_ms=inference_time_ms
         )
 
-    def _run_inference(self, prompt: str, max_tokens: int, temperature: float):
-        output = self.llm(prompt, max_tokens=max_tokens, temperature=temperature)
-        generated_text = output["choices"][0]["text"]
-        tokens_generated = output["usage"]["completion_tokens"]
-        return (generated_text, tokens_generated)
+    # Server-Streaming RPC - yields one token at a time
+    def GenerateStream(
+        self, request: inference_pb2.GenerateRequest, context: grpc.ServicerContext
+    ) -> Iterator[inference_pb2.GenerateStreamResponse]:
+        log.info("GenerateStream called request_id=%s prompt_len=%d max_tokens=%d temperature=%.2f",
+            request.request_id,
+            len(request.prompt),
+            request.max_tokens,
+            request.temperature)
 
+        if not _validate_request(request, context):
+            return
 
-def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
+        tokens_generated: int = 0
+        stream = cast(
+            Iterator[CreateCompletionStreamResponse],
+            self.llm.create_completion(
+                prompt=request.prompt,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                stream=True,
+            ),
+        )
+        for chunk in stream:
+            choice = chunk["choices"][0]
+            token_text: str = choice["text"]
+            finished: bool = choice.get("finish_reason") is not None
+            tokens_generated += 1
+
+            yield inference_pb2.GenerateStreamResponse(
+                request_id=request.request_id,
+                token=token_text,
+                finished=finished,
+                tokens_generated=tokens_generated,
+            )
+
+            if finished:
+                break
+
+        log.info(
+            "GenerateStream done request_id=%s tokens=%d",
+            request.request_id,
+            tokens_generated,
+        )
+
+def serve() -> None:
+    server: grpc.Server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
 
     inference_pb2_grpc.add_InferenceServicer_to_server(InferenceServicer(), server)
 
-    SERVICE_NAMES = (
+    SERVICE_NAMES: tuple[str, ...] = (
         inference_pb2.DESCRIPTOR.services_by_name["Inference"].full_name,
         reflection.SERVICE_NAME,
     )
@@ -114,7 +162,7 @@ def serve():
     log.info("worker listening on port %s (thread=%d)", PORT, MAX_WORKERS)
 
     # --- Graceful shutdown on SIGINT / SIGTERM
-    def _shutdown(signum, frame):
+    def _shutdown(signum: int, frame: Optional[FrameType]) -> None:
         log.info("Shutdown signal received, stopping server...")
         server.stop(grace=5).wait()
         log.info("Server stopped.")
