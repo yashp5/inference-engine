@@ -52,7 +52,7 @@ func (r *TokenBucketRateLimiter) allow(userId string) bool {
 	}
 
 	now := time.Now()
-	accrual := b.ratePerMs * (float64(now.Sub(b.lastTimestamp)))
+	accrual := b.ratePerMs * (float64(now.Sub(b.lastTimestamp).Milliseconds()))
 	b.tokens = min(b.tokens+accrual, float64(r.N))
 	b.lastTimestamp = now
 
