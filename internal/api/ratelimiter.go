@@ -1,18 +1,20 @@
 package api
 
 import (
+	"context"
 	"sync"
 	"time"
 )
 
 type RateLimiter interface {
 	allow(userId string) bool
+	sweep()
 }
 
-func NewRateLimiter(limiterType string, N int, D int) RateLimiter {
+func NewRateLimiter(ctx context.Context, limiterType string, N int, D int, bucketTtl time.Duration, sweepInterval time.Duration) RateLimiter {
 	switch limiterType {
 	default:
-		return NewTokenBucketRateLimiter(N, D)
+		return NewTokenBucketRateLimiter(ctx, N, D, bucketTtl, sweepInterval)
 	}
 }
 
@@ -23,18 +25,26 @@ type Bucket struct {
 }
 
 type TokenBucketRateLimiter struct {
-	mu      sync.Mutex
-	clients map[string]*Bucket
-	N       int
-	D       int
+	ctx           context.Context
+	mu            sync.Mutex
+	clients       map[string]*Bucket
+	N             int
+	D             int
+	bucketTTL     time.Duration
+	sweepInterval time.Duration
 }
 
-func NewTokenBucketRateLimiter(N int, D int) *TokenBucketRateLimiter {
-	return &TokenBucketRateLimiter{
-		clients: make(map[string]*Bucket),
-		N:       N,
-		D:       D,
+func NewTokenBucketRateLimiter(ctx context.Context, N int, D int, bucketTtl time.Duration, sweepInterval time.Duration) *TokenBucketRateLimiter {
+	r := &TokenBucketRateLimiter{
+		ctx:           ctx,
+		clients:       make(map[string]*Bucket),
+		N:             N,
+		D:             D,
+		bucketTTL:     bucketTtl,
+		sweepInterval: sweepInterval,
 	}
+	r.sweep()
+	return r
 }
 
 func (r *TokenBucketRateLimiter) allow(userId string) bool {
@@ -62,4 +72,25 @@ func (r *TokenBucketRateLimiter) allow(userId string) bool {
 
 	b.tokens = max(b.tokens-1.0, 0.0)
 	return true
+}
+
+func (r *TokenBucketRateLimiter) sweep() {
+	go func() {
+		ticker := time.NewTicker(r.sweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.ctx.Done():
+				return
+			case now := <-ticker.C:
+				r.mu.Lock()
+				for k, v := range r.clients {
+					if now.Sub(v.lastTimestamp) > r.bucketTTL {
+						delete(r.clients, k)
+					}
+				}
+				r.mu.Unlock()
+			}
+		}
+	}()
 }

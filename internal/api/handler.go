@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -19,8 +20,10 @@ import (
 )
 
 const (
-	rateLimiterRequests = 10
-	rateLimiterWindowMs = 100
+	rateLimiterRequests      = 10
+	rateLimiterWindowMs      = 100
+	rateLimiterBucketTTL     = 5 * time.Minute
+	rateLimiterSweepInterval = 1 * time.Minute
 )
 
 type Handler struct {
@@ -47,7 +50,7 @@ func NewHandler(ctx context.Context, inferClient inferencepb.InferenceClient, co
 	return &Handler{
 		inferClient:   inferClient,
 		conn:          conn,
-		rateLimiter:   NewTokenBucketRateLimiter(rateLimiterRequests, rateLimiterWindowMs),
+		rateLimiter:   NewTokenBucketRateLimiter(ctx, rateLimiterRequests, rateLimiterWindowMs, rateLimiterBucketTTL, rateLimiterSweepInterval),
 		priorityQueue: pq,
 	}
 }
@@ -67,8 +70,18 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func clientKey(r *http.Request) string {
+	if k := r.Header.Get("X-API-Key"); k != "" {
+		return k
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
-	if !h.rateLimiter.allow(r.RemoteAddr) {
+	if !h.rateLimiter.allow(clientKey(r)) {
 		writeJSON(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
@@ -100,7 +113,7 @@ func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 		Body:     reqBody,
 		Priority: types.PRIORITY_MEDIUM,
 		Ctx:      r.Context(),
-		RespCh:   make(chan *types.InferResponse),
+		RespCh:   make(chan *types.InferResponse, 1),
 	}
 	h.priorityQueue.Push(req)
 

@@ -44,14 +44,16 @@ func (s *Scheduler) Start(ctx context.Context) {
 		worker.Start(ctx)
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case b := <-s.batchedReqCh:
-			s.Schedule(b)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case b := <-s.batchedReqCh:
+				s.Schedule(b)
+			}
 		}
-	}
+	}()
 }
 
 func (s *Scheduler) Schedule(b types.Batch) {
@@ -123,7 +125,7 @@ func (w *Worker) Process(b types.Batch) {
 					return
 				}
 				b.WriteString(resp.Token)
-				tokensGenerated += int(resp.TokensGenerated)
+				tokensGenerated = int(resp.TokensGenerated)
 				if resp.Finished {
 					break
 				}

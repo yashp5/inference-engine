@@ -55,6 +55,11 @@ func (b *Batcher) Start(ctx context.Context) {
 }
 
 func (b *Batcher) Flush() {
-	b.batchedReqCh <- types.Batch(b.batch)
+	if len(b.batch) == 0 {
+		return
+	}
+	out := make([]*types.InferRequest, len(b.batch))
+	copy(out, b.batch)
+	b.batchedReqCh <- types.Batch(out)
 	b.batch = b.batch[:0]
 }
