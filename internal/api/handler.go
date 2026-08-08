@@ -21,7 +21,6 @@ import (
 const (
 	rateLimiterRequests = 10
 	rateLimiterWindowMs = 100
-	workerCount         = 3
 )
 
 type Handler struct {
@@ -38,15 +37,12 @@ func NewHandler(ctx context.Context, inferClient inferencepb.InferenceClient, co
 	dispatcher := dispatcher.NewDispatcher(pq, reqCh)
 	dispatcher.Start(ctx)
 
-	wchs := make([]chan types.Batch, 0, workerCount)
-	for range workerCount {
-		batchch := make(chan types.Batch, 10)
-		worker := scheduler.NewWorker(inferClient, batchch)
-		worker.Start(ctx)
-		wchs = append(wchs, worker.Batchch)
-	}
-	batcher := batcher.NewBatcher(wchs, reqCh)
+	batchedReqCh := make(chan types.Batch)
+	batcher := batcher.NewBatcher(reqCh, batchedReqCh)
 	batcher.Start(ctx)
+
+	scheduler := scheduler.NewScheduler(inferClient, batchedReqCh)
+	scheduler.Start(ctx)
 
 	return &Handler{
 		inferClient:   inferClient,

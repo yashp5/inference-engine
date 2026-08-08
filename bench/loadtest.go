@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yashp5/inference-serving-infra/internal/types"
 )
 
 const (
@@ -124,25 +126,6 @@ func NewBenchmark(url string, totalRequests int, concurrency int) *Benchmark {
 	}
 }
 
-type CompletionsRequest struct {
-	RequestId   string  `json:"request_id"`
-	Prompt      string  `json:"prompt"`
-	MaxTokens   int     `json:"max_tokens"`
-	Temperature float64 `json:"temperature"`
-}
-
-type CompletionsReponse struct {
-	RequestId       string `json:"request_id"`
-	GeneratedText   string `json:"generated_text"`
-	TokensGenerated int    `json:"tokens_generated"`
-	InferenceTimeMs int    `json:"inference_time_ms"`
-}
-
-type ErrorResponse struct {
-	RequestId string `json:"request_id,omitempty"`
-	Error     string `json:"error"`
-}
-
 func (b *Benchmark) Run(ctx context.Context) (*Report, []error) {
 	c := http.Client{
 		Timeout: 10 * time.Second,
@@ -155,7 +138,7 @@ func (b *Benchmark) Run(ctx context.Context) (*Report, []error) {
 		go func(c http.Client, totalRequests int) {
 			defer wg.Done()
 			for b.requestsMade.Add(1) <= int64(totalRequests) {
-				payload := &CompletionsRequest{
+				payload := &types.CompletionsRequest{
 					Prompt:      "Once upon a time",
 					MaxTokens:   20,
 					Temperature: 0.7,

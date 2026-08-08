@@ -13,18 +13,16 @@ const (
 )
 
 type Batcher struct {
-	workerChs []chan types.Batch
-	next      int
-	reqCh     <-chan *types.InferRequest
-	batch     []*types.InferRequest
+	batchedReqCh chan<- types.Batch
+	reqCh        <-chan *types.InferRequest
+	batch        []*types.InferRequest
 }
 
-func NewBatcher(workerChs []chan types.Batch, reqCh <-chan *types.InferRequest) *Batcher {
+func NewBatcher(reqCh <-chan *types.InferRequest, batchedReqCh chan<- types.Batch) *Batcher {
 	return &Batcher{
-		workerChs: workerChs,
-		next:      0,
-		reqCh:     reqCh,
-		batch:     make([]*types.InferRequest, 0, maxBatchSize),
+		reqCh:        reqCh,
+		batchedReqCh: batchedReqCh,
+		batch:        make([]*types.InferRequest, 0, maxBatchSize),
 	}
 }
 
@@ -57,7 +55,6 @@ func (b *Batcher) Start(ctx context.Context) {
 }
 
 func (b *Batcher) Flush() {
-	b.workerChs[b.next%len(b.workerChs)] <- types.Batch(b.batch)
-	b.next++
+	b.batchedReqCh <- types.Batch(b.batch)
 	b.batch = b.batch[:0]
 }
