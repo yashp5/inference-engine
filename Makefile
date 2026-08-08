@@ -46,6 +46,7 @@ generate:
 	$(PYTHON) -m grpc_tools.protoc \
 		--proto_path=$(PROTO_DIR) \
 		--python_out=$(PYTHON_GEN_DIR) \
+		--pyi_out=$(PYTHON_GEN_DIR) \
 		--grpc_python_out=$(PYTHON_GEN_DIR) \
 		$(PROTO_FILES)
 	@echo "==> Done. Go → $(GEN_DIR)/  Python → $(PYTHON_GEN_DIR)/"
@@ -81,6 +82,7 @@ clean:
 	@rm -rf $(GEN_DIR)
 	@echo "==> Removing Python generated files from $(PYTHON_GEN_DIR)/..."
 	@rm -f $(PYTHON_GEN_DIR)/inference_pb2.py
+	@rm -f $(PYTHON_GEN_DIR)/inference_pb2.pyi
 	@rm -f $(PYTHON_GEN_DIR)/inference_pb2_grpc.py
 	@echo "==> Removing binaries ($(BINARY_DIR)/)..."
 	@rm -rf $(BINARY_DIR)

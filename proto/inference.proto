@@ -6,6 +6,10 @@ option go_package = "github.com/yashp5/inference-serving-infra/gen;inferencepb";
 
 package inference;
 
+// standard batching waits for all requests in a batch to finish before starting the next batch
+// continous batching lets new requests join at every decode step
+// needs to be streaming gprc
+
 message GenerateRequest {
     string request_id  = 1;
     string prompt = 2;
@@ -20,6 +24,15 @@ message GenerateResponse {
     int32 inference_time_ms = 4;
 }
 
+message GenerateStreamResponse {
+    string request_id = 1;
+    string token = 2;
+    bool finished = 3;
+    int32 tokens_generated = 4;
+}
+
 service Inference {
-    rpc Generate (GenerateRequest) returns (GenerateResponse) {}
+    rpc Generate (GenerateRequest) returns (GenerateResponse);
+
+    rpc GenerateStream (GenerateRequest) returns (stream GenerateStreamResponse);
 }

@@ -7,12 +7,11 @@
 package inferencepb
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -158,6 +157,74 @@ func (x *GenerateResponse) GetInferenceTimeMs() int32 {
 	return 0
 }
 
+type GenerateStreamResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Token           string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Finished        bool                   `protobuf:"varint,3,opt,name=finished,proto3" json:"finished,omitempty"`
+	TokensGenerated int32                  `protobuf:"varint,4,opt,name=tokens_generated,json=tokensGenerated,proto3" json:"tokens_generated,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GenerateStreamResponse) Reset() {
+	*x = GenerateStreamResponse{}
+	mi := &file_inference_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerateStreamResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerateStreamResponse) ProtoMessage() {}
+
+func (x *GenerateStreamResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerateStreamResponse.ProtoReflect.Descriptor instead.
+func (*GenerateStreamResponse) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GenerateStreamResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *GenerateStreamResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *GenerateStreamResponse) GetFinished() bool {
+	if x != nil {
+		return x.Finished
+	}
+	return false
+}
+
+func (x *GenerateStreamResponse) GetTokensGenerated() int32 {
+	if x != nil {
+		return x.TokensGenerated
+	}
+	return 0
+}
+
 var File_inference_proto protoreflect.FileDescriptor
 
 const file_inference_proto_rawDesc = "" +
@@ -175,9 +242,16 @@ const file_inference_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12%\n" +
 	"\x0egenerated_text\x18\x02 \x01(\tR\rgeneratedText\x12)\n" +
 	"\x10tokens_generated\x18\x03 \x01(\x05R\x0ftokensGenerated\x12*\n" +
-	"\x11inference_time_ms\x18\x04 \x01(\x05R\x0finferenceTimeMs2R\n" +
-	"\tInference\x12E\n" +
-	"\bGenerate\x12\x1a.inference.GenerateRequest\x1a\x1b.inference.GenerateResponse\"\x00B;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3"
+	"\x11inference_time_ms\x18\x04 \x01(\x05R\x0finferenceTimeMs\"\x94\x01\n" +
+	"\x16GenerateStreamResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x1a\n" +
+	"\bfinished\x18\x03 \x01(\bR\bfinished\x12)\n" +
+	"\x10tokens_generated\x18\x04 \x01(\x05R\x0ftokensGenerated2\xa3\x01\n" +
+	"\tInference\x12C\n" +
+	"\bGenerate\x12\x1a.inference.GenerateRequest\x1a\x1b.inference.GenerateResponse\x12Q\n" +
+	"\x0eGenerateStream\x12\x1a.inference.GenerateRequest\x1a!.inference.GenerateStreamResponse0\x01B;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3"
 
 var (
 	file_inference_proto_rawDescOnce sync.Once
@@ -191,16 +265,19 @@ func file_inference_proto_rawDescGZIP() []byte {
 	return file_inference_proto_rawDescData
 }
 
-var file_inference_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_inference_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_inference_proto_goTypes = []any{
-	(*GenerateRequest)(nil),  // 0: inference.GenerateRequest
-	(*GenerateResponse)(nil), // 1: inference.GenerateResponse
+	(*GenerateRequest)(nil),        // 0: inference.GenerateRequest
+	(*GenerateResponse)(nil),       // 1: inference.GenerateResponse
+	(*GenerateStreamResponse)(nil), // 2: inference.GenerateStreamResponse
 }
 var file_inference_proto_depIdxs = []int32{
 	0, // 0: inference.Inference.Generate:input_type -> inference.GenerateRequest
-	1, // 1: inference.Inference.Generate:output_type -> inference.GenerateResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	0, // 1: inference.Inference.GenerateStream:input_type -> inference.GenerateRequest
+	1, // 2: inference.Inference.Generate:output_type -> inference.GenerateResponse
+	2, // 3: inference.Inference.GenerateStream:output_type -> inference.GenerateStreamResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -217,7 +294,7 @@ func file_inference_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_inference_proto_rawDesc), len(file_inference_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

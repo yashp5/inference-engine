@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Inference_Generate_FullMethodName = "/inference.Inference/Generate"
+	Inference_Generate_FullMethodName       = "/inference.Inference/Generate"
+	Inference_GenerateStream_FullMethodName = "/inference.Inference/GenerateStream"
 )
 
 // InferenceClient is the client API for Inference service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type InferenceClient interface {
 	Generate(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (*GenerateResponse, error)
+	GenerateStream(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateStreamResponse], error)
 }
 
 type inferenceClient struct {
@@ -47,11 +49,31 @@ func (c *inferenceClient) Generate(ctx context.Context, in *GenerateRequest, opt
 	return out, nil
 }
 
+func (c *inferenceClient) GenerateStream(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateStreamResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Inference_ServiceDesc.Streams[0], Inference_GenerateStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GenerateRequest, GenerateStreamResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Inference_GenerateStreamClient = grpc.ServerStreamingClient[GenerateStreamResponse]
+
 // InferenceServer is the server API for Inference service.
 // All implementations must embed UnimplementedInferenceServer
 // for forward compatibility.
 type InferenceServer interface {
 	Generate(context.Context, *GenerateRequest) (*GenerateResponse, error)
+	GenerateStream(*GenerateRequest, grpc.ServerStreamingServer[GenerateStreamResponse]) error
 	mustEmbedUnimplementedInferenceServer()
 }
 
@@ -64,6 +86,9 @@ type UnimplementedInferenceServer struct{}
 
 func (UnimplementedInferenceServer) Generate(context.Context, *GenerateRequest) (*GenerateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Generate not implemented")
+}
+func (UnimplementedInferenceServer) GenerateStream(*GenerateRequest, grpc.ServerStreamingServer[GenerateStreamResponse]) error {
+	return status.Error(codes.Unimplemented, "method GenerateStream not implemented")
 }
 func (UnimplementedInferenceServer) mustEmbedUnimplementedInferenceServer() {}
 func (UnimplementedInferenceServer) testEmbeddedByValue()                   {}
@@ -104,6 +129,17 @@ func _Inference_Generate_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Inference_GenerateStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GenerateRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(InferenceServer).GenerateStream(m, &grpc.GenericServerStream[GenerateRequest, GenerateStreamResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Inference_GenerateStreamServer = grpc.ServerStreamingServer[GenerateStreamResponse]
+
 // Inference_ServiceDesc is the grpc.ServiceDesc for Inference service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -116,6 +152,12 @@ var Inference_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Inference_Generate_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "GenerateStream",
+			Handler:       _Inference_GenerateStream_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "inference.proto",
 }

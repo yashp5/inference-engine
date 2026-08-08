@@ -39,12 +39,23 @@ class InferenceStub(object):
                 request_serializer=inference__pb2.GenerateRequest.SerializeToString,
                 response_deserializer=inference__pb2.GenerateResponse.FromString,
                 _registered_method=True)
+        self.GenerateStream = channel.unary_stream(
+                '/inference.Inference/GenerateStream',
+                request_serializer=inference__pb2.GenerateRequest.SerializeToString,
+                response_deserializer=inference__pb2.GenerateStreamResponse.FromString,
+                _registered_method=True)
 
 
 class InferenceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def Generate(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GenerateStream(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -57,6 +68,11 @@ def add_InferenceServicer_to_server(servicer, server):
                     servicer.Generate,
                     request_deserializer=inference__pb2.GenerateRequest.FromString,
                     response_serializer=inference__pb2.GenerateResponse.SerializeToString,
+            ),
+            'GenerateStream': grpc.unary_stream_rpc_method_handler(
+                    servicer.GenerateStream,
+                    request_deserializer=inference__pb2.GenerateRequest.FromString,
+                    response_serializer=inference__pb2.GenerateStreamResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -86,6 +102,33 @@ class Inference(object):
             '/inference.Inference/Generate',
             inference__pb2.GenerateRequest.SerializeToString,
             inference__pb2.GenerateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GenerateStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/inference.Inference/GenerateStream',
+            inference__pb2.GenerateRequest.SerializeToString,
+            inference__pb2.GenerateStreamResponse.FromString,
             options,
             channel_credentials,
             insecure,
