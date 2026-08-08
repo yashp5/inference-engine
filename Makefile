@@ -2,9 +2,9 @@
 BINARY_DIR       = bin
 PROTO_DIR        = proto
 GEN_DIR          = gen
-PYTHON_GEN_DIR   = cmd/woker
+PYTHON_GEN_DIR   = cmd/worker
 SERVER_BIN       = $(BINARY_DIR)/server
-PYTHON           = python3.11
+PYTHON           = python3.14
 
 # Automatically picks up every .proto file in proto/ —
 # no need to manually list them when you add new ones
@@ -21,7 +21,7 @@ all: generate build
 #   inference.pb.go       (message structs)
 #   inference_grpc.pb.go  (server interface + client stub)
 #
-# Python output → cmd/woker/
+# Python output → cmd/worker/
 #   inference_pb2.py      (message classes)
 #   inference_pb2_grpc.py (servicer base class + stub)
 #
@@ -71,7 +71,7 @@ run:
 #   make run-worker PYTHON=python3.12
 .PHONY: run-worker
 run-worker:
-	$(PYTHON) cmd/woker/woker.py
+	$(PYTHON) cmd/worker/worker.py
 
 # ── clean ──────────────────────────────────────────────────────────────────────
 # Removes all generated files (Go + Python) and compiled binaries

@@ -1,4 +1,8 @@
 
+# Build artifacts
+/bin/
+/bench/loadtest
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

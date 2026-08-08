@@ -117,7 +117,7 @@ def serve():
     def _shutdown(signum, frame):
         log.info("Shutdown signal received, stopping server...")
         server.stop(grace=5).wait()
-        log.info("Server stoppe.")
+        log.info("Server stopped.")
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)

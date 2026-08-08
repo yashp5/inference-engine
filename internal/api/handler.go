@@ -75,6 +75,12 @@ func NewHandler(ctx context.Context, inferClient inferencepb.InferenceClient, co
 	}
 }
 
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	state := h.conn.GetState()
 	if state == connectivity.Shutdown || state == connectivity.TransientFailure {
@@ -82,12 +88,6 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
 }
 
 func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
