@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	inferClient, conn, err := worker.New("http://localhost:50051")
+	inferClient, conn, err := worker.New("127.0.0.1:50051")
 	if err != nil {
 		panic(err)
 	}

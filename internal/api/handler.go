@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -257,36 +257,57 @@ func (w *Worker) Start(ctx context.Context) {
 }
 
 func (w *Worker) Process(b Batch) {
-	totalStart := time.Now()
 	wg := sync.WaitGroup{}
+
+	// slot based scheduler
+	// at every decode step, the worker reports which slots finished
+	// shceduler immediately swaps in waiting requests to fill freed slots
+	// the batch stays as full as possible at all times
 
 	for _, req := range b {
 		wg.Add(1)
 		go func(req *Request) {
 			defer wg.Done()
-			grpcStart := time.Now()
-			inferResp, err := w.inferClient.Generate(req.ctx, &inferencepb.GenerateRequest{
+
+			inferenceStart := time.Now()
+
+			b := strings.Builder{}
+			tokensGenerated := 0
+
+			stream, err := w.inferClient.GenerateStream(req.ctx, &inferencepb.GenerateRequest{
 				RequestId:   req.body.RequestId,
 				Prompt:      req.body.Prompt,
 				MaxTokens:   int32(req.body.MaxTokens),
 				Temperature: float32(req.body.Temperature),
 			})
-			grpcLatency := time.Since(grpcStart)
-			totalLatency := time.Since(totalStart)
-
 			if err != nil {
-				log.Printf("[request_id=%s] grpc error total=%dms grpc=%dms overhead=%dms err=%v", req.body.RequestId, totalLatency.Milliseconds(), grpcLatency.Milliseconds(), (totalLatency - grpcLatency).Milliseconds(), err)
 				req.respCh <- &Response{body: nil, error: err}
 				return
 			}
 
-			respBody := &CompletionsReponse{
-				RequestId:       req.body.RequestId,
-				GeneratedText:   inferResp.GeneratedText,
-				TokensGenerated: int(inferResp.TokensGenerated),
-				InferenceTimeMs: int(inferResp.InferenceTimeMs),
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					req.respCh <- &Response{body: nil, error: err}
+					return
+				}
+				b.WriteString(resp.Token)
+				tokensGenerated += int(resp.TokensGenerated)
+				if resp.Finished {
+					break
+				}
 			}
 
+			inferenceTime := time.Since(inferenceStart)
+			respBody := &CompletionsReponse{
+				RequestId:       req.body.RequestId,
+				GeneratedText:   b.String(),
+				TokensGenerated: tokensGenerated,
+				InferenceTimeMs: int(inferenceTime),
+			}
 			req.respCh <- &Response{body: respBody, error: nil}
 		}(req)
 	}
