@@ -1,6 +1,9 @@
-package api
+package types
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 const maxTokensUpperBound = 4096
 
@@ -11,7 +14,7 @@ type CompletionsRequest struct {
 	Temperature float64 `json:"temperature"`
 }
 
-func (r *CompletionsRequest) validate() string {
+func (r *CompletionsRequest) Validate() string {
 	if r.Prompt == "" {
 		return "prompt must not be empty"
 	}
@@ -38,3 +41,25 @@ type ErrorResponse struct {
 	RequestId string `json:"request_id,omitempty"`
 	Error     string `json:"error"`
 }
+
+type Priority int
+
+const (
+	PRIORITY_LOW Priority = iota
+	PRIORITY_MEDIUM
+	PRIORITY_HIGH
+)
+
+type InferResponse struct {
+	Body  *CompletionsReponse
+	Error error
+}
+
+type InferRequest struct {
+	Body     *CompletionsRequest
+	Priority Priority
+	RespCh   chan *InferResponse
+	Ctx      context.Context
+}
+
+type Batch []*InferRequest

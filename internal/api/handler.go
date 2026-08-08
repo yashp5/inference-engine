@@ -1,17 +1,19 @@
 package api
 
 import (
-	"container/heap"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	inferencepb "github.com/yashp5/inference-serving-infra/gen"
+	"github.com/yashp5/inference-serving-infra/internal/batcher"
+	"github.com/yashp5/inference-serving-infra/internal/dispatcher"
+	"github.com/yashp5/inference-serving-infra/internal/queue"
+	"github.com/yashp5/inference-serving-infra/internal/scheduler"
+	"github.com/yashp5/inference-serving-infra/internal/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 )
@@ -20,53 +22,32 @@ const (
 	rateLimiterRequests = 10
 	rateLimiterWindowMs = 100
 	workerCount         = 3
-	maxBatchSize        = 8
-	maxBatchWaitTimeMs  = 100
 )
-
-type Batch []*Request
-
-type Priority int
-
-const (
-	LOW Priority = iota
-	MEDIUM
-	HIGH
-)
-
-type Response struct {
-	body  *CompletionsReponse
-	error error
-}
-
-type Request struct {
-	body     *CompletionsRequest
-	priority Priority
-	respCh   chan *Response
-	ctx      context.Context
-}
 
 type Handler struct {
 	inferClient   inferencepb.InferenceClient
 	conn          *grpc.ClientConn
-	priorityQueue *PriorityQueue
+	priorityQueue *queue.PriorityQueue
 	rateLimiter   RateLimiter
 }
 
 func NewHandler(ctx context.Context, inferClient inferencepb.InferenceClient, conn *grpc.ClientConn) *Handler {
-	pq := NewPriorityQueue()
-	reqCh := make(chan *Request)
-	wchs := make([]chan Batch, 0, workerCount)
-	for range workerCount {
-		batchch := make(chan Batch, 10)
-		worker := NewWorker(inferClient, batchch)
-		worker.Start(ctx)
-		wchs = append(wchs, worker.batchch)
-	}
-	dispatcher := NewDispatcher(pq, reqCh)
+	pq := queue.NewPriorityQueue()
+
+	reqCh := make(chan *types.InferRequest)
+	dispatcher := dispatcher.NewDispatcher(pq, reqCh)
 	dispatcher.Start(ctx)
-	batcher := NewBatcher(wchs, reqCh)
+
+	wchs := make([]chan types.Batch, 0, workerCount)
+	for range workerCount {
+		batchch := make(chan types.Batch, 10)
+		worker := scheduler.NewWorker(inferClient, batchch)
+		worker.Start(ctx)
+		wchs = append(wchs, worker.Batchch)
+	}
+	batcher := batcher.NewBatcher(wchs, reqCh)
 	batcher.Start(ctx)
+
 	return &Handler{
 		inferClient:   inferClient,
 		conn:          conn,
@@ -100,217 +81,41 @@ func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 
 	reqBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{RequestId: requestId, Error: "failed to read request body"})
+		writeJSON(w, http.StatusBadRequest, types.ErrorResponse{RequestId: requestId, Error: "failed to read request body"})
 		return
 	}
 	defer r.Body.Close()
 
-	reqBody := &CompletionsRequest{}
+	reqBody := &types.CompletionsRequest{}
 	if err := json.Unmarshal(reqBytes, reqBody); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{RequestId: requestId, Error: "failed to unmarshal req body"})
+		writeJSON(w, http.StatusBadRequest, types.ErrorResponse{RequestId: requestId, Error: "failed to unmarshal req body"})
 		return
 	}
 
 	id, _ = uuid.NewV7()
 	reqBody.RequestId = id.String()
 
-	if errMsg := reqBody.validate(); errMsg != "" {
-		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{RequestId: requestId, Error: errMsg})
+	if errMsg := reqBody.Validate(); errMsg != "" {
+		writeJSON(w, http.StatusBadRequest, types.ErrorResponse{RequestId: requestId, Error: errMsg})
 		return
 	}
 
-	req := &Request{
-		body:     reqBody,
-		priority: MEDIUM,
-		ctx:      r.Context(),
-		respCh:   make(chan *Response),
+	req := &types.InferRequest{
+		Body:     reqBody,
+		Priority: types.PRIORITY_MEDIUM,
+		Ctx:      r.Context(),
+		RespCh:   make(chan *types.InferResponse),
 	}
 	h.priorityQueue.Push(req)
 
 	select {
 	case <-time.After(5 * time.Second):
-		writeJSON(w, http.StatusRequestTimeout, ErrorResponse{RequestId: requestId, Error: "request timeout"})
-	case resp := <-req.respCh:
-		if resp.error != nil {
-			writeJSON(w, http.StatusRequestTimeout, ErrorResponse{RequestId: requestId, Error: resp.error.Error()})
+		writeJSON(w, http.StatusRequestTimeout, types.ErrorResponse{RequestId: requestId, Error: "request timeout"})
+	case resp := <-req.RespCh:
+		if resp.Error != nil {
+			writeJSON(w, http.StatusInternalServerError, types.ErrorResponse{RequestId: requestId, Error: resp.Error.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, resp.body)
+		writeJSON(w, http.StatusOK, resp.Body)
 	}
-}
-
-type Dispatcher struct {
-	pq    *PriorityQueue
-	next  int
-	reqCh chan<- *Request
-}
-
-func NewDispatcher(pq *PriorityQueue, reqCh chan<- *Request) *Dispatcher {
-	return &Dispatcher{
-		pq:    pq,
-		next:  0,
-		reqCh: reqCh,
-	}
-}
-
-func (d *Dispatcher) Start(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-d.pq.signal:
-				d.pq.mu.Lock()
-				if d.pq.buf.Len() == 0 {
-					d.pq.mu.Unlock()
-					continue
-				}
-				reqs := make([]*Request, 0)
-				for d.pq.buf.Len() > 0 {
-					req := heap.Pop(&d.pq.buf).(*Request)
-					reqs = append(reqs, req)
-				}
-				d.pq.mu.Unlock()
-				for _, req := range reqs {
-					d.reqCh <- req
-				}
-			}
-		}
-	}()
-}
-
-type Batcher struct {
-	maxBatchSize int
-	maxWaitTime  time.Duration
-	workerChs    []chan Batch
-	next         int
-	reqCh        <-chan *Request
-	batch        []*Request
-}
-
-func NewBatcher(workerChs []chan Batch, reqCh <-chan *Request) *Batcher {
-	return &Batcher{
-		workerChs: workerChs,
-		next:      0,
-		reqCh:     reqCh,
-		batch:     make([]*Request, 0, maxBatchSize),
-	}
-}
-
-func (b *Batcher) Start(ctx context.Context) {
-	var timer *time.Timer
-	var timerch <-chan time.Time
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case req := <-b.reqCh:
-				b.batch = append(b.batch, req)
-				if len(b.batch) == 1 {
-					timer = time.NewTimer(maxBatchWaitTimeMs * time.Millisecond)
-					timerch = timer.C
-				}
-				if len(b.batch) >= maxBatchSize {
-					timer.Stop()
-					timerch = nil
-					b.Flush()
-				}
-			case <-timerch:
-				b.Flush()
-				timer.Stop()
-				timerch = nil
-			}
-		}
-	}()
-}
-
-func (b *Batcher) Flush() {
-	b.workerChs[b.next%len(b.workerChs)] <- Batch(b.batch)
-	b.next++
-	b.batch = b.batch[:0]
-}
-
-type Worker struct {
-	inferClient inferencepb.InferenceClient
-	batchch     chan Batch
-}
-
-func NewWorker(inferClient inferencepb.InferenceClient, batchch chan Batch) *Worker {
-	return &Worker{
-		inferClient: inferClient,
-		batchch:     batchch,
-	}
-}
-
-func (w *Worker) Start(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case b := <-w.batchch:
-				w.Process(b)
-			}
-		}
-	}()
-}
-
-func (w *Worker) Process(b Batch) {
-	wg := sync.WaitGroup{}
-
-	// slot based scheduler
-	// at every decode step, the worker reports which slots finished
-	// shceduler immediately swaps in waiting requests to fill freed slots
-	// the batch stays as full as possible at all times
-
-	for _, req := range b {
-		wg.Add(1)
-		go func(req *Request) {
-			defer wg.Done()
-
-			inferenceStart := time.Now()
-
-			b := strings.Builder{}
-			tokensGenerated := 0
-
-			stream, err := w.inferClient.GenerateStream(req.ctx, &inferencepb.GenerateRequest{
-				RequestId:   req.body.RequestId,
-				Prompt:      req.body.Prompt,
-				MaxTokens:   int32(req.body.MaxTokens),
-				Temperature: float32(req.body.Temperature),
-			})
-			if err != nil {
-				req.respCh <- &Response{body: nil, error: err}
-				return
-			}
-
-			for {
-				resp, err := stream.Recv()
-				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					req.respCh <- &Response{body: nil, error: err}
-					return
-				}
-				b.WriteString(resp.Token)
-				tokensGenerated += int(resp.TokensGenerated)
-				if resp.Finished {
-					break
-				}
-			}
-
-			inferenceTime := time.Since(inferenceStart)
-			respBody := &CompletionsReponse{
-				RequestId:       req.body.RequestId,
-				GeneratedText:   b.String(),
-				TokensGenerated: tokensGenerated,
-				InferenceTimeMs: int(inferenceTime),
-			}
-			req.respCh <- &Response{body: respBody, error: nil}
-		}(req)
-	}
-
-	wg.Wait()
 }
