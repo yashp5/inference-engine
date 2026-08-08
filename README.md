@@ -12,9 +12,9 @@ The Go server acts as the control plane — handling HTTP routing, request queui
 
 ```
                     ┌─────────────────────────────────────────────┐
-                    │              Go HTTP Server                  │
+                    │              Go HTTP Server                 │
                     │                                             │
-  HTTP Request ───► │  Validate ─► Queue ─► Batch ─► Dispatch    │
+  HTTP Request ───► │  Validate ─► Queue ─► Batch ─► Dispatch     │
                     │                                     │       │
                     │                                     ▼       │
                     │                              gRPC Client    │
@@ -23,7 +23,7 @@ The Go server acts as the control plane — handling HTTP routing, request queui
                                                       │ gRPC (TCP)
                                                       │
                     ┌─────────────────────────────────▼───────────┐
-                    │            Python Worker                     │
+                    │            Python Worker                    │
                     │                                             │
                     │   gRPC Server ─► llama-cpp-python ─► Model  │
                     └─────────────────────────────────────────────┘
@@ -64,6 +64,8 @@ inference-serving-infra/
 ├── go.mod
 ├── go.sum
 ├── Makefile
+├── requirements.txt                 # Python worker dependencies
+├── MULTIMODAL.md                    # Notes on extending toward multimodal/voice serving
 └── README.md
 ```
 
@@ -109,7 +111,7 @@ curl -X POST http://localhost:8080/v1/completions \
 
 The project is built incrementally. Each phase adds a layer of complexity that addresses a real production concern.
 
-### Phase 1 — Single Model, Single Request Server ✅
+### Phase 1 — Single Model, Single Request Server
 
 The foundation: a Go HTTP server that proxies inference requests to a Python gRPC worker.
 
@@ -266,7 +268,7 @@ This is where it becomes a distributed systems project.
 
 ---
 
-### Phase 8 — KV Cache Management (Bonus)
+### Phase 8 — KV Cache Management
 
 Advanced but extremely relevant to current LLM infrastructure.
 
@@ -325,6 +327,57 @@ go run bench/loadtest.go --concurrency 50 --total 1000 --url http://localhost:80
 ```
 
 Results are output as CSV for plotting.
+
+## How This Compares to Production Systems
+
+This project builds the same *shape* as production inference stacks at roughly
+1/1000th the scale. The concepts transfer directly; the divergence is depth per
+layer, not different layers.
+
+### Where it maps almost 1:1
+
+- **Control plane / data plane split** — vLLM, TensorRT-LLM/Triton, and SGLang all
+  separate orchestration (HTTP, queuing, scheduling, routing) from model execution.
+  The Go-server/Python-worker split here is that pattern in miniature; vLLM even
+  mirrors the language split (Python orchestration around a C++/CUDA core, with a
+  Go/Rust router in front).
+- **Continuous batching (Phase 4)** — iteration-level scheduling with slot swap-in
+  is literally what vLLM's engine step does. This is the core scheduling loop of a
+  modern inference engine, not an analogy to it.
+- **Prefix/KV caching (Phase 8)** — production-critical everywhere. Anthropic and
+  OpenAI expose it as a billed product feature (prompt caching); SGLang's
+  RadixAttention is a more sophisticated version of hash-based prefix lookup.
+- **Backpressure and admission control (Phase 2)** — 429s with `Retry-After`,
+  priority queues, and per-user token buckets are exactly how API gateways in front
+  of model fleets behave under load.
+- **Session affinity and drain-aware deploys** (see [MULTIMODAL.md](MULTIMODAL.md))
+  — realtime voice APIs live with the same constraint: stream state pins to a
+  worker, and re-routing mid-session is forbidden.
+- **Disaggregated serving** — per-stage independent scaling is the same principle
+  as prefill/decode disaggregation (DistServe, Mooncake), one of the most active
+  production serving topics today.
+
+### Where production diverges
+
+- **Inside the model step** — PagedAttention, custom CUDA kernels, CUDA graphs,
+  quantization, speculative decoding, chunked prefill. This project deliberately
+  treats the intra-GPU layer as a black box (delegated to llama.cpp); production
+  teams spend enormous effort there, but it's a different discipline — kernels,
+  not systems.
+- **KV cache as a distributed object** — at scale, KV state migrates between
+  machines (RDMA transfer, tiered CPU/disk offload, cache-aware routing that
+  chases prefixes across the fleet). Phase 8 here is single-node; production makes
+  it a distributed storage problem.
+- **Multi-tenancy economics** — quotas, fair-share across thousands of customers,
+  priority tiers tied to billing, abuse handling. The token buckets in Phase 2 are
+  the seed of this, but the real version is a large system of its own.
+- **Fleet operations** — Kubernetes, weight distribution to thousands of nodes,
+  heterogeneous GPU generations, and failure rates where something is always
+  broken. Phase 7's heartbeats are the toy version of a much hairier reliability
+  problem.
+- **The scheduler itself as a hot path** — at high QPS the router/scheduler becomes
+  performance-critical code (Rust/C++, lock-free structures), not straightforward
+  Go.
 
 ## Reading List
 
