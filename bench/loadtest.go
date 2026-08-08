@@ -1,4 +1,4 @@
-package bench
+package main
 
 import (
 	"bytes"
@@ -7,24 +7,26 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 const (
 	workerCount = 5
-	csvFilePath = "/Users/yash/ml-infra/inference-serving-infra/"
+	csvFilePath = "/Users/yash/build/inference-engine/bench/runs.csv"
 )
 
 func main() {
 	targetUrlPtr := flag.String("url", "http://localhost:8080/infer", "target url")
 	concurrencyPtr := flag.Int("concurrency", 3, "number of concurrent workers sending requests")
-	totalRequestsPtr := flag.Int("totalRequest", 100, "total requests to be made")
+	totalRequestsPtr := flag.Int("totalRequest", 1, "total requests to be made")
+	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -41,15 +43,19 @@ func main() {
 	record := buildRecord(report)
 	err := writeToCSV(csvFilePath, record)
 	if err != nil {
-		fmt.Sprintf("error writing to csv: %v", err)
+		fmt.Printf("error writing to csv: %v", err)
 	}
 }
 
 func buildRecord(r *Report) []string {
 	record := []string{}
-	v := reflect.ValueOf(r)
-	t := reflect.TypeOf(v)
+	v := reflect.ValueOf(r).Elem()
+	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.Name == "errors" {
+			continue
+		}
 		value := v.Field(i)
 
 		var str string
@@ -139,14 +145,16 @@ type ErrorResponse struct {
 
 func (b *Benchmark) Run(ctx context.Context) (*Report, []error) {
 	c := http.Client{
-		Timeout: 3 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
-	signal := make(chan struct{})
-
+	wallclockstart := time.Now()
+	var wg sync.WaitGroup
 	for range b.concurreny {
-		go func(c http.Client) {
-			for b.requestsMade.Load() < int64(b.totalRequests) {
+		wg.Add(1)
+		go func(c http.Client, totalRequests int) {
+			defer wg.Done()
+			for b.requestsMade.Add(1) <= int64(totalRequests) {
 				payload := &CompletionsRequest{
 					Prompt:      "Once upon a time",
 					MaxTokens:   20,
@@ -155,38 +163,32 @@ func (b *Benchmark) Run(ctx context.Context) (*Report, []error) {
 				body, err := json.Marshal(payload)
 				if err != nil {
 					b.errch <- err
+					continue
 				}
 
 				req, err := http.NewRequest("POST", b.url, bytes.NewBuffer(body))
 				if err != nil {
 					b.errch <- err
+					continue
 				}
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Authorization", "Bearer token")
 
-				resp, err := c.Do(req)
+				now := time.Now()
+				_, err = c.Do(req)
+				latency := time.Since(now)
 				if err != nil {
 					b.errch <- err
+					continue
 				}
-
-				respBytes, err := io.ReadAll(resp.Body)
-				if err != nil {
-					b.errch <- err
-				}
-				respBody := &CompletionsReponse{}
-				json.Unmarshal(respBytes, respBody)
-
-				b.ch <- respBody.InferenceTimeMs
-				b.requestsMade.Add(1)
+				b.ch <- int(latency)
 			}
-			select {
-			case signal <- struct{}{}:
-			default:
-			}
-		}(c)
+		}(c, b.totalRequests)
 	}
 
-	<-signal
+	wg.Wait()
+	wallclockSeconds := time.Since(wallclockstart)
+
 	close(b.ch)
 	close(b.errch)
 	for v := range b.ch {
@@ -196,23 +198,28 @@ func (b *Benchmark) Run(ctx context.Context) (*Report, []error) {
 		b.errors = append(b.errors, e)
 	}
 
-	return b.BuildReport(), nil
+	return b.BuildReport(int(wallclockSeconds)), nil
 }
 
-func (b *Benchmark) BuildReport() *Report {
+func (b *Benchmark) BuildReport(wallClockSeconds int) *Report {
 	totalTime := 0
 	for _, l := range b.latencies {
 		totalTime += l
 	}
+	slices.Sort(b.latencies)
+	n := len(b.latencies)
+	p50Ms := b.latencies[int((float64(n) * 0.5))]
+	p95Ms := b.latencies[int((float64(n) * 0.95))]
+	p99Ms := b.latencies[int(float64(n)*0.99)]
 	report := &Report{
 		concurreny:    b.concurreny,
 		total:         b.totalRequests,
 		totalTime:     totalTime,
-		throughputRps: 0,
-		p50Ms:         0,
-		p95Ms:         0,
-		p99Ms:         0,
-		errors:        b.error,
+		throughputRps: b.totalRequests / wallClockSeconds,
+		p50Ms:         p50Ms,
+		p95Ms:         p95Ms,
+		p99Ms:         p99Ms,
+		errors:        b.errors,
 	}
 	return report
 }
