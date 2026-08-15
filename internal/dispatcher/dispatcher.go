@@ -9,14 +9,12 @@ import (
 
 type Dispatcher struct {
 	pq    *queue.PriorityQueue
-	next  int
 	reqCh chan<- *types.InferRequest
 }
 
 func NewDispatcher(pq *queue.PriorityQueue, reqCh chan<- *types.InferRequest) *Dispatcher {
 	return &Dispatcher{
 		pq:    pq,
-		next:  0,
 		reqCh: reqCh,
 	}
 }
@@ -28,12 +26,12 @@ func (d *Dispatcher) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-d.pq.Signal():
-				reqs, err := d.pq.PopAll()
+				reqs, err := d.pq.PopAll() // fix ? need to use pop as after pop, a new req addition will result in different dispatch order
 				if err != nil {
 					continue
 				}
 				for _, req := range reqs {
-					d.reqCh <- req
+					d.reqCh <- req // not buffered? will get blocked if the batcher cannot send the batch to the scheduler
 				}
 			}
 		}

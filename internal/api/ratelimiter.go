@@ -8,19 +8,25 @@ import (
 
 type RateLimiter interface {
 	allow(userId string) bool
-	sweep()
 }
 
-func NewRateLimiter(ctx context.Context, limiterType string, N int, D int, bucketTtl time.Duration, sweepInterval time.Duration) RateLimiter {
+func NewRateLimiter(ctx context.Context, limiterType string, N int, window time.Duration, bucketTtl time.Duration, sweepInterval time.Duration) RateLimiter {
+	if N <= 0 || window <= 0 {
+		return noopRateLimiter{}
+	}
 	switch limiterType {
 	default:
-		return NewTokenBucketRateLimiter(ctx, N, D, bucketTtl, sweepInterval)
+		return NewTokenBucketRateLimiter(ctx, N, window, bucketTtl, sweepInterval)
 	}
 }
 
+type noopRateLimiter struct{}
+
+func (noopRateLimiter) allow(string) bool { return true }
+
 type Bucket struct {
 	tokens        float64
-	ratePerMs     float64
+	ratePerNano   float64
 	lastTimestamp time.Time
 }
 
@@ -29,17 +35,17 @@ type TokenBucketRateLimiter struct {
 	mu            sync.Mutex
 	clients       map[string]*Bucket
 	N             int
-	D             int
+	window        time.Duration
 	bucketTTL     time.Duration
 	sweepInterval time.Duration
 }
 
-func NewTokenBucketRateLimiter(ctx context.Context, N int, D int, bucketTtl time.Duration, sweepInterval time.Duration) *TokenBucketRateLimiter {
+func NewTokenBucketRateLimiter(ctx context.Context, N int, D time.Duration, bucketTtl time.Duration, sweepInterval time.Duration) *TokenBucketRateLimiter {
 	r := &TokenBucketRateLimiter{
 		ctx:           ctx,
 		clients:       make(map[string]*Bucket),
 		N:             N,
-		D:             D,
+		window:        D,
 		bucketTTL:     bucketTtl,
 		sweepInterval: sweepInterval,
 	}
@@ -55,14 +61,14 @@ func (r *TokenBucketRateLimiter) allow(userId string) bool {
 	if !ok {
 		b = &Bucket{
 			tokens:        float64(r.N),
-			ratePerMs:     float64(r.N) / float64(r.D),
+			ratePerNano:   float64(r.N) / float64(r.window),
 			lastTimestamp: time.Now(),
 		}
 		r.clients[userId] = b
 	}
 
 	now := time.Now()
-	accrual := b.ratePerMs * (float64(now.Sub(b.lastTimestamp).Milliseconds()))
+	accrual := b.ratePerNano * (float64(now.Sub(b.lastTimestamp)))
 	b.tokens = min(b.tokens+accrual, float64(r.N))
 	b.lastTimestamp = now
 

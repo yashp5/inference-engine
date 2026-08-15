@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -10,20 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	inferencepb "github.com/yashp5/inference-serving-infra/gen"
-	"github.com/yashp5/inference-serving-infra/internal/batcher"
-	"github.com/yashp5/inference-serving-infra/internal/dispatcher"
 	"github.com/yashp5/inference-serving-infra/internal/queue"
-	"github.com/yashp5/inference-serving-infra/internal/scheduler"
 	"github.com/yashp5/inference-serving-infra/internal/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
-)
-
-const (
-	rateLimiterRequests      = 10
-	rateLimiterWindowMs      = 100
-	rateLimiterBucketTTL     = 5 * time.Minute
-	rateLimiterSweepInterval = 1 * time.Minute
 )
 
 type Handler struct {
@@ -33,24 +22,11 @@ type Handler struct {
 	rateLimiter   RateLimiter
 }
 
-func NewHandler(ctx context.Context, inferClient inferencepb.InferenceClient, conn *grpc.ClientConn) *Handler {
-	pq := queue.NewPriorityQueue()
-
-	reqCh := make(chan *types.InferRequest)
-	dispatcher := dispatcher.NewDispatcher(pq, reqCh)
-	dispatcher.Start(ctx)
-
-	batchedReqCh := make(chan types.Batch)
-	batcher := batcher.NewBatcher(reqCh, batchedReqCh)
-	batcher.Start(ctx)
-
-	scheduler := scheduler.NewScheduler(inferClient, batchedReqCh)
-	scheduler.Start(ctx)
-
+func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue) *Handler {
 	return &Handler{
 		inferClient:   inferClient,
 		conn:          conn,
-		rateLimiter:   NewTokenBucketRateLimiter(ctx, rateLimiterRequests, rateLimiterWindowMs, rateLimiterBucketTTL, rateLimiterSweepInterval),
+		rateLimiter:   r,
 		priorityQueue: pq,
 	}
 }

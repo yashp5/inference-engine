@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/yashp5/inference-serving-infra/internal/types"
 )
@@ -22,15 +23,19 @@ func (q *queue) Pop() any {
 }
 
 type PriorityQueue struct {
-	mu     sync.Mutex
-	buf    queue
-	signal chan struct{}
+	mu            sync.Mutex
+	buf           queue
+	maxQueueDepth int
+	queueTimeout  time.Duration
+	signal        chan struct{}
 }
 
-func NewPriorityQueue() *PriorityQueue {
+func NewPriorityQueue(maxQueueDepth int, queueTimeout time.Duration) *PriorityQueue {
 	return &PriorityQueue{
-		buf:    queue{},
-		signal: make(chan struct{}, 1),
+		buf:           queue{}, // unbounded queue, makek it bounded
+		maxQueueDepth: maxQueueDepth,
+		queueTimeout:  queueTimeout,
+		signal:        make(chan struct{}, 1),
 	}
 }
 

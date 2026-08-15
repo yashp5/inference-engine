@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	workerCount        = 3
 	workerChBufferSize = 10
 )
 
@@ -23,7 +22,7 @@ type Scheduler struct {
 	next         int
 }
 
-func NewScheduler(inferClient inferencepb.InferenceClient, batchedReqCh <-chan types.Batch) *Scheduler {
+func NewScheduler(inferClient inferencepb.InferenceClient, batchedReqCh <-chan types.Batch, workerCount int) *Scheduler {
 	workerChs := make([]chan types.Batch, 0, workerCount)
 	for range workerCount {
 		batchch := make(chan types.Batch, workerChBufferSize)
@@ -50,7 +49,8 @@ func (s *Scheduler) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case b := <-s.batchedReqCh:
-				s.Schedule(b)
+				s.Schedule(b) // this can be blocking if the worker ch is full, the upstream batcher will also get blocked as the scheduler wont be able to consume
+				// until the worker process
 			}
 		}
 	}()
@@ -136,7 +136,7 @@ func (w *Worker) Process(b types.Batch) {
 				RequestId:       req.Body.RequestId,
 				GeneratedText:   b.String(),
 				TokensGenerated: tokensGenerated,
-				InferenceTimeMs: int(inferenceTime),
+				InferenceTimeMs: int(inferenceTime.Milliseconds()),
 			}
 			req.RespCh <- &types.InferResponse{Body: respBody, Error: nil}
 		}(req)

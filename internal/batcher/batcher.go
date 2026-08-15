@@ -7,22 +7,21 @@ import (
 	"github.com/yashp5/inference-serving-infra/internal/types"
 )
 
-const (
-	maxBatchSize       = 8
-	maxBatchWaitTimeMs = 100
-)
-
 type Batcher struct {
 	batchedReqCh chan<- types.Batch
 	reqCh        <-chan *types.InferRequest
 	batch        []*types.InferRequest
+	maxBatchSize int
+	maxBatchWait time.Duration
 }
 
-func NewBatcher(reqCh <-chan *types.InferRequest, batchedReqCh chan<- types.Batch) *Batcher {
+func NewBatcher(reqCh <-chan *types.InferRequest, batchedReqCh chan<- types.Batch, maxBatchSize int, maxBatchWait time.Duration) *Batcher {
 	return &Batcher{
 		reqCh:        reqCh,
 		batchedReqCh: batchedReqCh,
 		batch:        make([]*types.InferRequest, 0, maxBatchSize),
+		maxBatchSize: maxBatchSize,
+		maxBatchWait: maxBatchWait,
 	}
 }
 
@@ -37,10 +36,10 @@ func (b *Batcher) Start(ctx context.Context) {
 			case req := <-b.reqCh:
 				b.batch = append(b.batch, req)
 				if len(b.batch) == 1 {
-					timer = time.NewTimer(maxBatchWaitTimeMs * time.Millisecond)
+					timer = time.NewTimer(b.maxBatchWait)
 					timerch = timer.C
 				}
-				if len(b.batch) >= maxBatchSize {
+				if len(b.batch) >= b.maxBatchSize {
 					timer.Stop()
 					timerch = nil
 					b.Flush()
@@ -60,6 +59,6 @@ func (b *Batcher) Flush() {
 	}
 	out := make([]*types.InferRequest, len(b.batch))
 	copy(out, b.batch)
-	b.batchedReqCh <- types.Batch(out)
+	b.batchedReqCh <- types.Batch(out) // blocking call
 	b.batch = b.batch[:0]
 }

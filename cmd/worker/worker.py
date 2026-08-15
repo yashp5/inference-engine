@@ -6,6 +6,7 @@ TinyLlama 1.1B Q4 quantized is around 600MB and runs fine on CPU.
 If you want even lighter for iteration speed, GPT-2 via transformers works too but is less representative of real LLM inference.
 """
 
+import argparse
 from concurrent import futures
 import logging
 import os
@@ -59,11 +60,11 @@ def _validate_request(
     return True
 
 class InferenceServicer(inference_pb2_grpc.InferenceServicer):
-    def __init__(self) -> None:
+    def __init__(self, model_path: str, n_ctx: int) -> None:
         super().__init__()
         self.llm: Llama = Llama(
-            model_path=MODEL_PATH,
-            n_ctx=512,
+            model_path=model_path,
+            n_ctx=n_ctx,
         )
 
     # Unary RPC - waits for the full completion and returns response
@@ -147,9 +148,15 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
         )
 
 def serve() -> None:
-    server: grpc.Server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
+    parser = argparse.ArgumentParser(description="Inference worker")
+    parser.add_argument("--model-path", default=MODEL_PATH, help="Path to GGUF model")
+    parser.add_argument("--port", default=PORT, help="Port to listen on")
+    parser.add_argument("--n-ctx",type=int, default=512, help="Context window size")
+    parser.add_argument("--n-slots", type=int, default=MAX_WORKERS, help="Concurrent request slots")
+    args = parser.parse_args()
 
-    inference_pb2_grpc.add_InferenceServicer_to_server(InferenceServicer(), server)
+    server: grpc.Server = grpc.server(futures.ThreadPoolExecutor(max_workers=args.n_slots))
+    inference_pb2_grpc.add_InferenceServicer_to_server(InferenceServicer(model_path=args.model_path, n_ctx=args.n_ctx), server)
 
     SERVICE_NAMES: tuple[str, ...] = (
         inference_pb2.DESCRIPTOR.services_by_name["Inference"].full_name,
@@ -157,9 +164,9 @@ def serve() -> None:
     )
     reflection.enable_server_reflection(SERVICE_NAMES, server)
 
-    server.add_insecure_port(f"[::]:{PORT}")
+    server.add_insecure_port(f"[::]:{args.port}")
     server.start()
-    log.info("worker listening on port %s (thread=%d)", PORT, MAX_WORKERS)
+    log.info("worker listening on port %s (thread=%d)", args.port, args.n_slots)
 
     # --- Graceful shutdown on SIGINT / SIGTERM
     def _shutdown(signum: int, frame: Optional[FrameType]) -> None:

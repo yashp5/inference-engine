@@ -9,21 +9,41 @@ import (
 	"time"
 
 	"github.com/yashp5/inference-serving-infra/internal/api"
+	"github.com/yashp5/inference-serving-infra/internal/batcher"
+	"github.com/yashp5/inference-serving-infra/internal/config"
+	"github.com/yashp5/inference-serving-infra/internal/dispatcher"
+	"github.com/yashp5/inference-serving-infra/internal/queue"
+	"github.com/yashp5/inference-serving-infra/internal/scheduler"
+	"github.com/yashp5/inference-serving-infra/internal/types"
 	"github.com/yashp5/inference-serving-infra/internal/worker"
 )
 
 func main() {
-	inferClient, conn, err := worker.New("127.0.0.1:50051")
+	cfg := config.Load()
+
+	ctx := context.Background()
+
+	inferClient, conn, err := worker.New(cfg.WorkerAddr)
 	if err != nil {
 		panic(err)
 	}
 	defer conn.Close()
 
-	ctx := context.Background()
-	h := api.NewHandler(ctx, inferClient, conn)
+	r := api.NewRateLimiter(ctx, "TOKEN_BUCKET", cfg.RateLimitN, cfg.RateLimitWindow, cfg.RateLimitBucketTTL, cfg.RateLimitSweepInterval)
+	pq := queue.NewPriorityQueue(cfg.MaxQueueDepth, cfg.QueueTimeout)
+
+	reqCh := make(chan *types.InferRequest)
+	dispatcher.NewDispatcher(pq, reqCh).Start(ctx)
+
+	batchedReqCh := make(chan types.Batch)
+	batcher.NewBatcher(reqCh, batchedReqCh, cfg.MaxBatchSize, cfg.MaxBatchWait).Start(ctx)
+
+	scheduler.NewScheduler(inferClient, batchedReqCh, cfg.WorkerCount).Start(ctx)
+
+	h := api.NewHandler(inferClient, conn, r, pq)
 	mux := api.NewMux(h)
 
-	srv := &http.Server{Addr: ":8080", Handler: mux}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 	go srv.ListenAndServe()
 
 	quit := make(chan os.Signal, 1)
