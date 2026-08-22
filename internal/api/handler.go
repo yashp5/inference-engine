@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ type Handler struct {
 	conn          *grpc.ClientConn
 	priorityQueue *queue.PriorityQueue
 	rateLimiter   RateLimiter
+	inflight      atomic.Int64
 }
 
 func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue) *Handler {
@@ -56,11 +58,22 @@ func clientKey(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, types.StatsResponse{
+		QueueDepth: h.priorityQueue.Len(),
+		InFlight:   h.inflight.Load(),
+	})
+}
+
 func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 	if !h.rateLimiter.allow(clientKey(r)) {
 		writeJSON(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
+
+	h.inflight.Add(1)
+	defer h.inflight.Add(-1)
+
 	id, _ := uuid.NewV7()
 	requestId := id.String()
 

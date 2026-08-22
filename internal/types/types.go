@@ -50,6 +50,14 @@ const (
 	PRIORITY_HIGH
 )
 
+// StatsResponse is what GET /stats returns. InFlight counts requests accepted
+// past the rate limiter and not yet answered, so it includes whatever is still
+// sitting in the queue: InFlight-QueueDepth is roughly what the workers are on.
+type StatsResponse struct {
+	QueueDepth int   `json:"queue_depth"`
+	InFlight   int64 `json:"in_flight"`
+}
+
 type InferResponse struct {
 	Body  *CompletionsReponse
 	Error error
