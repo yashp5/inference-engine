@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 const maxTokensUpperBound = 4096
@@ -35,6 +36,8 @@ type CompletionsReponse struct {
 	GeneratedText   string `json:"generated_text"`
 	TokensGenerated int    `json:"tokens_generated"`
 	InferenceTimeMs int    `json:"inference_time_ms"`
+	QueueTimeMs     int    `json:"queue_time_ms"`
+	TotalTimeMs     int    `json:"total_time_ms"`
 }
 
 type ErrorResponse struct {
@@ -64,10 +67,13 @@ type InferResponse struct {
 }
 
 type InferRequest struct {
-	Body     *CompletionsRequest
-	Priority Priority
-	RespCh   chan *InferResponse
-	Ctx      context.Context
+	Body         *CompletionsRequest
+	ReceivedAt   time.Time `json:"received_at"`
+	EnqueuedAt   time.Time `json:"enqueued_at"`
+	DispatchedAt time.Time `json:"dispatched_at"`
+	Priority     Priority
+	RespCh       chan *InferResponse
+	Ctx          context.Context
 }
 
 type Batch []*InferRequest

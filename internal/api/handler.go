@@ -39,9 +39,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Healthz(w http.ResponseWriter, r *http.Request) {
 	state := h.conn.GetState()
-	if state == connectivity.Shutdown || state == connectivity.TransientFailure {
+	if state == connectivity.Idle {
+		h.conn.Connect()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "worker_not_ready"})
+		return
+	}
+	if !(state == connectivity.Ready) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "worker_unavailable"})
 		return
 	}
@@ -65,7 +70,8 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
+	receivedAt := time.Now()
 	if !h.rateLimiter.allow(clientKey(r)) {
 		writeJSON(w, http.StatusTooManyRequests, "rate limited")
 		return
@@ -90,7 +96,6 @@ func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, _ = uuid.NewV7()
 	reqBody.RequestId = id.String()
 
 	if errMsg := reqBody.Validate(); errMsg != "" {
@@ -99,11 +104,13 @@ func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := &types.InferRequest{
-		Body:     reqBody,
-		Priority: types.PRIORITY_MEDIUM,
-		Ctx:      r.Context(),
-		RespCh:   make(chan *types.InferResponse, 1),
+		Body:       reqBody,
+		Priority:   types.PRIORITY_MEDIUM,
+		Ctx:        r.Context(),
+		RespCh:     make(chan *types.InferResponse, 1),
+		ReceivedAt: receivedAt,
 	}
+	req.EnqueuedAt = time.Now()
 	h.priorityQueue.Push(req)
 
 	select {
@@ -114,6 +121,7 @@ func (h *Handler) Infer(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, types.ErrorResponse{RequestId: requestId, Error: resp.Error.Error()})
 			return
 		}
+		resp.Body.TotalTimeMs = int(time.Since(req.ReceivedAt).Milliseconds())
 		writeJSON(w, http.StatusOK, resp.Body)
 	}
 }

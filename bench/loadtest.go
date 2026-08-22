@@ -29,7 +29,7 @@ const (
 )
 
 func main() {
-	targetUrlPtr := flag.String("url", "http://localhost:8080/infer", "target url")
+	targetUrlPtr := flag.String("url", "http://localhost:8080/v1/completions", "target url")
 	concurrencyPtr := flag.Int("concurrency", 3, "number of concurrent workers sending requests; ignored when -sweep is set")
 	totalRequestsPtr := flag.Int("totalRequest", 1, "total requests to be made, per concurrency level; ignored when -requestsPerWorker is set")
 	reqPerWorkerPtr := flag.Int("requestsPerWorker", 0, "requests each concurrent worker sends; total per level = this x concurrency. Overrides -totalRequest")

@@ -27,6 +27,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	conn.Connect()
 	defer conn.Close()
 
 	r := api.NewRateLimiter(ctx, "TOKEN_BUCKET", cfg.RateLimitN, cfg.RateLimitWindow, cfg.RateLimitBucketTTL, cfg.RateLimitSweepInterval)

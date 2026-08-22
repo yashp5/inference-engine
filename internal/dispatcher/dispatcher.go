@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"time"
 
 	"github.com/yashp5/inference-serving-infra/internal/queue"
 	"github.com/yashp5/inference-serving-infra/internal/types"
@@ -31,6 +32,7 @@ func (d *Dispatcher) Start(ctx context.Context) {
 					continue
 				}
 				for _, req := range reqs {
+					req.DispatchedAt = time.Now()
 					d.reqCh <- req // not buffered? will get blocked if the batcher cannot send the batch to the scheduler
 				}
 			}

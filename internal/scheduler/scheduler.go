@@ -137,6 +137,7 @@ func (w *Worker) Process(b types.Batch) {
 				GeneratedText:   b.String(),
 				TokensGenerated: tokensGenerated,
 				InferenceTimeMs: int(inferenceTime.Milliseconds()),
+				QueueTimeMs:     int(inferenceStart.Sub(req.EnqueuedAt).Milliseconds()),
 			}
 			req.RespCh <- &types.InferResponse{Body: respBody, Error: nil}
 		}(req)
