@@ -39,9 +39,9 @@ func main() {
 	batchedReqCh := make(chan types.Batch)
 	batcher.NewBatcher(reqCh, batchedReqCh, cfg.MaxBatchSize, cfg.MaxBatchWait).Start(ctx)
 
-	scheduler.NewScheduler(inferClient, batchedReqCh, cfg.WorkerCount).Start(ctx)
+	scheduler.NewScheduler(inferClient, batchedReqCh, cfg.WorkerCount, cfg.MaxInflight).Start(ctx)
 
-	h := api.NewHandler(inferClient, conn, r, pq)
+	h := api.NewHandler(inferClient, conn, r, pq, cfg.QueueTimeout, cfg.AgingInterval)
 	mux := api.NewMux(h)
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}

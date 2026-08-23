@@ -13,6 +13,7 @@ type CompletionsRequest struct {
 	Prompt      string  `json:"prompt"`
 	MaxTokens   int     `json:"max_tokens"`
 	Temperature float64 `json:"temperature"`
+	Priority    string  `json:"priority"`
 }
 
 func (r *CompletionsRequest) Validate() string {
@@ -27,6 +28,13 @@ func (r *CompletionsRequest) Validate() string {
 	}
 	if r.Temperature < 0.0 || r.Temperature > 2.0 {
 		return "temperature must be between 0.0 and 2.0"
+	}
+	switch r.Priority {
+	case "":
+		r.Priority = "medium"
+	case "low", "medium", "high":
+	default:
+		return `priority must be one of "low", "medium", "high"`
 	}
 	return ""
 }
@@ -67,13 +75,14 @@ type InferResponse struct {
 }
 
 type InferRequest struct {
-	Body         *CompletionsRequest
-	ReceivedAt   time.Time `json:"received_at"`
-	EnqueuedAt   time.Time `json:"enqueued_at"`
-	DispatchedAt time.Time `json:"dispatched_at"`
-	Priority     Priority
-	RespCh       chan *InferResponse
-	Ctx          context.Context
+	Body          *CompletionsRequest
+	ReceivedAt    time.Time     `json:"received_at"`
+	EnqueuedAt    time.Time     `json:"enqueued_at"`
+	DispatchedAt  time.Time     `json:"dispatched_at"`
+	AgingInterval time.Duration `json:"aging_interval"`
+	Priority      Priority
+	RespCh        chan *InferResponse
+	Ctx           context.Context
 }
 
 type Batch []*InferRequest

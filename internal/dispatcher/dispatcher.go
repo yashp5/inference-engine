@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/yashp5/inference-serving-infra/internal/queue"
@@ -27,13 +28,16 @@ func (d *Dispatcher) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-d.pq.Signal():
-				reqs, err := d.pq.PopAll() // fix ? need to use pop as after pop, a new req addition will result in different dispatch order
-				if err != nil {
-					continue
-				}
-				for _, req := range reqs {
+				for {
+					req, err := d.pq.Pop()
+					if errors.Is(err, queue.ErrQueueEmpty) {
+						break
+					}
+					if req.Ctx.Err() != nil || time.Since(req.EnqueuedAt) > d.pq.QueueTimeout() {
+						continue
+					}
 					req.DispatchedAt = time.Now()
-					d.reqCh <- req // not buffered? will get blocked if the batcher cannot send the batch to the scheduler
+					d.reqCh <- req
 				}
 			}
 		}

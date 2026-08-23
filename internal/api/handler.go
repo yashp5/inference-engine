@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -22,14 +24,18 @@ type Handler struct {
 	priorityQueue *queue.PriorityQueue
 	rateLimiter   RateLimiter
 	inflight      atomic.Int64
+	queueTimeout  time.Duration
+	agingInterval time.Duration
 }
 
-func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue) *Handler {
+func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue, queueTimeout time.Duration, agingInterval time.Duration) *Handler {
 	return &Handler{
 		inferClient:   inferClient,
 		conn:          conn,
 		rateLimiter:   r,
 		priorityQueue: pq,
+		queueTimeout:  queueTimeout,
+		agingInterval: agingInterval,
 	}
 }
 
@@ -72,17 +78,17 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now()
+
+	id, _ := uuid.NewV7()
+	requestId := id.String()
+
 	if !h.rateLimiter.allow(clientKey(r)) {
-		writeJSON(w, http.StatusTooManyRequests, "rate limited")
+		writeJSON(w, http.StatusTooManyRequests, types.ErrorResponse{RequestId: requestId, Error: "rate limited"})
 		return
 	}
 
 	h.inflight.Add(1)
 	defer h.inflight.Add(-1)
-
-	id, _ := uuid.NewV7()
-	requestId := id.String()
-
 	reqBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, types.ErrorResponse{RequestId: requestId, Error: "failed to read request body"})
@@ -103,19 +109,43 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), h.queueTimeout)
+	defer cancel()
+
+	var priority types.Priority
+	switch reqBody.Priority {
+	case "low":
+		priority = types.PRIORITY_LOW
+	case "medium":
+		priority = types.PRIORITY_MEDIUM
+	case "high":
+		priority = types.PRIORITY_HIGH
+	default:
+		// Validate rejects anything else; medium is the documented default
+		priority = types.PRIORITY_MEDIUM
+	}
+
 	req := &types.InferRequest{
-		Body:       reqBody,
-		Priority:   types.PRIORITY_MEDIUM,
-		Ctx:        r.Context(),
-		RespCh:     make(chan *types.InferResponse, 1),
-		ReceivedAt: receivedAt,
+		Body:          reqBody,
+		Priority:      priority,
+		AgingInterval: h.agingInterval,
+		Ctx:           ctx,
+		RespCh:        make(chan *types.InferResponse, 1),
+		ReceivedAt:    receivedAt,
 	}
 	req.EnqueuedAt = time.Now()
-	h.priorityQueue.Push(req)
+	err = h.priorityQueue.Push(req)
+	if errors.Is(err, queue.ErrQueueFull) {
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusTooManyRequests, types.ErrorResponse{RequestId: requestId, Error: "queue full"})
+		return
+	}
 
 	select {
-	case <-time.After(5 * time.Second):
-		writeJSON(w, http.StatusRequestTimeout, types.ErrorResponse{RequestId: requestId, Error: "request timeout"})
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writeJSON(w, http.StatusGatewayTimeout, types.ErrorResponse{RequestId: requestId, Error: "request timeout"})
+		}
 	case resp := <-req.RespCh:
 		if resp.Error != nil {
 			writeJSON(w, http.StatusInternalServerError, types.ErrorResponse{RequestId: requestId, Error: resp.Error.Error()})

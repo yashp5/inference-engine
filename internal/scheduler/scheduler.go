@@ -12,17 +12,18 @@ import (
 )
 
 const (
-	workerChBufferSize = 10
+	workerChBufferSize = 3
 )
 
 type Scheduler struct {
 	inferClient  inferencepb.InferenceClient
 	batchedReqCh <-chan types.Batch
 	workerChs    []chan types.Batch
+	sem          chan struct{}
 	next         int
 }
 
-func NewScheduler(inferClient inferencepb.InferenceClient, batchedReqCh <-chan types.Batch, workerCount int) *Scheduler {
+func NewScheduler(inferClient inferencepb.InferenceClient, batchedReqCh <-chan types.Batch, workerCount int, maxInFlight int) *Scheduler {
 	workerChs := make([]chan types.Batch, 0, workerCount)
 	for range workerCount {
 		batchch := make(chan types.Batch, workerChBufferSize)
@@ -33,13 +34,14 @@ func NewScheduler(inferClient inferencepb.InferenceClient, batchedReqCh <-chan t
 		inferClient:  inferClient,
 		batchedReqCh: batchedReqCh,
 		workerChs:    workerChs,
+		sem:          make(chan struct{}, maxInFlight),
 		next:         0,
 	}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
 	for _, wch := range s.workerChs {
-		worker := NewWorker(s.inferClient, wch)
+		worker := NewWorker(s.inferClient, wch, s.sem)
 		worker.Start(ctx)
 	}
 
@@ -49,27 +51,28 @@ func (s *Scheduler) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case b := <-s.batchedReqCh:
-				s.Schedule(b) // this can be blocking if the worker ch is full, the upstream batcher will also get blocked as the scheduler wont be able to consume
-				// until the worker process
+				s.Schedule(b)
 			}
 		}
 	}()
 }
 
 func (s *Scheduler) Schedule(b types.Batch) {
-	s.workerChs[s.next%len(s.workerChs)] <- types.Batch(b) // round robin scheduling
+	s.workerChs[s.next%len(s.workerChs)] <- types.Batch(b)
 	s.next++
 }
 
 type Worker struct {
 	InferClient inferencepb.InferenceClient
 	Batchch     chan types.Batch
+	sem         chan struct{}
 }
 
-func NewWorker(inferClient inferencepb.InferenceClient, batchch chan types.Batch) *Worker {
+func NewWorker(inferClient inferencepb.InferenceClient, batchch chan types.Batch, sem chan struct{}) *Worker {
 	return &Worker{
 		InferClient: inferClient,
 		Batchch:     batchch,
+		sem:         sem,
 	}
 }
 
@@ -86,23 +89,32 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
+func (w *Worker) acquireSem() {
+	w.sem <- struct{}{}
+}
+
+func (w *Worker) releaseSem() {
+	<-w.sem
+}
+
 func (w *Worker) Process(b types.Batch) {
 	wg := sync.WaitGroup{}
 
-	// slot based scheduler
-	// at every decode step, the worker reports which slots finished
-	// shceduler immediately swaps in waiting requests to fill freed slots
-	// the batch stays as full as possible at all times
-
+	// TODO: continous batching
 	for _, req := range b {
 		wg.Add(1)
 		go func(req *types.InferRequest) {
 			defer wg.Done()
 
-			inferenceStart := time.Now()
-
 			b := strings.Builder{}
 			tokensGenerated := 0
+
+			w.acquireSem()
+			defer w.releaseSem()
+
+			// after the semaphore, so queueing behind a full worker pool is not
+			// reported to the client as model time
+			inferenceStart := time.Now()
 
 			stream, err := w.InferClient.GenerateStream(req.Ctx, &inferencepb.GenerateRequest{
 				RequestId:   req.Body.RequestId,
