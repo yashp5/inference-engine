@@ -21,6 +21,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type FinishReason int32
+
+const (
+	FinishReason_FINISH_REASON_UNSPECIFIED FinishReason = 0
+	FinishReason_FINISH_REASON_EOS         FinishReason = 1
+	FinishReason_FINSIH_REASON_LENGTH      FinishReason = 2
+	FinishReason_FINISH_REASON_CANCELLED   FinishReason = 3
+	FinishReason_FINISH_REASON_ERROR       FinishReason = 4
+)
+
+// Enum value maps for FinishReason.
+var (
+	FinishReason_name = map[int32]string{
+		0: "FINISH_REASON_UNSPECIFIED",
+		1: "FINISH_REASON_EOS",
+		2: "FINSIH_REASON_LENGTH",
+		3: "FINISH_REASON_CANCELLED",
+		4: "FINISH_REASON_ERROR",
+	}
+	FinishReason_value = map[string]int32{
+		"FINISH_REASON_UNSPECIFIED": 0,
+		"FINISH_REASON_EOS":         1,
+		"FINSIH_REASON_LENGTH":      2,
+		"FINISH_REASON_CANCELLED":   3,
+		"FINISH_REASON_ERROR":       4,
+	}
+)
+
+func (x FinishReason) Enum() *FinishReason {
+	p := new(FinishReason)
+	*p = x
+	return p
+}
+
+func (x FinishReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FinishReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_inference_proto_enumTypes[0].Descriptor()
+}
+
+func (FinishReason) Type() protoreflect.EnumType {
+	return &file_inference_proto_enumTypes[0]
+}
+
+func (x FinishReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FinishReason.Descriptor instead.
+func (FinishReason) EnumDescriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{0}
+}
+
 type GenerateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -225,6 +280,678 @@ func (x *GenerateStreamResponse) GetTokensGenerated() int32 {
 	return 0
 }
 
+type Admit struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Prompt        string                 `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	MaxTokens     int32                  `protobuf:"varint,3,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	Temperature   float32                `protobuf:"fixed32,4,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Admit) Reset() {
+	*x = Admit{}
+	mi := &file_inference_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Admit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Admit) ProtoMessage() {}
+
+func (x *Admit) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Admit.ProtoReflect.Descriptor instead.
+func (*Admit) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Admit) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *Admit) GetPrompt() string {
+	if x != nil {
+		return x.Prompt
+	}
+	return ""
+}
+
+func (x *Admit) GetMaxTokens() int32 {
+	if x != nil {
+		return x.MaxTokens
+	}
+	return 0
+}
+
+func (x *Admit) GetTemperature() float32 {
+	if x != nil {
+		return x.Temperature
+	}
+	return 0
+}
+
+type Cancel struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Cancel) Reset() {
+	*x = Cancel{}
+	mi := &file_inference_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Cancel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Cancel) ProtoMessage() {}
+
+func (x *Cancel) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Cancel.ProtoReflect.Descriptor instead.
+func (*Cancel) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Cancel) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+type EngineRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*EngineRequest_Admit
+	//	*EngineRequest_Cancel
+	Payload       isEngineRequest_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EngineRequest) Reset() {
+	*x = EngineRequest{}
+	mi := &file_inference_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EngineRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EngineRequest) ProtoMessage() {}
+
+func (x *EngineRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EngineRequest.ProtoReflect.Descriptor instead.
+func (*EngineRequest) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *EngineRequest) GetPayload() isEngineRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *EngineRequest) GetAdmit() *Admit {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineRequest_Admit); ok {
+			return x.Admit
+		}
+	}
+	return nil
+}
+
+func (x *EngineRequest) GetCancel() *Cancel {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineRequest_Cancel); ok {
+			return x.Cancel
+		}
+	}
+	return nil
+}
+
+type isEngineRequest_Payload interface {
+	isEngineRequest_Payload()
+}
+
+type EngineRequest_Admit struct {
+	Admit *Admit `protobuf:"bytes,1,opt,name=admit,proto3,oneof"`
+}
+
+type EngineRequest_Cancel struct {
+	Cancel *Cancel `protobuf:"bytes,2,opt,name=cancel,proto3,oneof"`
+}
+
+func (*EngineRequest_Admit) isEngineRequest_Payload() {}
+
+func (*EngineRequest_Cancel) isEngineRequest_Payload() {}
+
+type Admitted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	SlotId        int32                  `protobuf:"varint,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Admitted) Reset() {
+	*x = Admitted{}
+	mi := &file_inference_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Admitted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Admitted) ProtoMessage() {}
+
+func (x *Admitted) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Admitted.ProtoReflect.Descriptor instead.
+func (*Admitted) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Admitted) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *Admitted) GetSlotId() int32 {
+	if x != nil {
+		return x.SlotId
+	}
+	return 0
+}
+
+type Token struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	SlotId        int32                  `protobuf:"varint,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	Text          string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`                       // llama_token_to_piece output
+	TokenId       int32                  `protobuf:"varint,4,opt,name=token_id,json=tokenId,proto3" json:"token_id,omitempty"` // useful for debugging / detokenizer bugs
+	Index         int32                  `protobuf:"varint,5,opt,name=index,proto3" json:"index,omitempty"`                    // 0-based position in this request's output
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Token) Reset() {
+	*x = Token{}
+	mi := &file_inference_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Token) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Token) ProtoMessage() {}
+
+func (x *Token) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Token.ProtoReflect.Descriptor instead.
+func (*Token) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Token) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *Token) GetSlotId() int32 {
+	if x != nil {
+		return x.SlotId
+	}
+	return 0
+}
+
+func (x *Token) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *Token) GetTokenId() int32 {
+	if x != nil {
+		return x.TokenId
+	}
+	return 0
+}
+
+func (x *Token) GetIndex() int32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+type Finished struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	SlotId          int32                  `protobuf:"varint,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	Reason          string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	TokensGenerated int32                  `protobuf:"varint,4,opt,name=tokens_generated,json=tokensGenerated,proto3" json:"tokens_generated,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *Finished) Reset() {
+	*x = Finished{}
+	mi := &file_inference_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Finished) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Finished) ProtoMessage() {}
+
+func (x *Finished) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Finished.ProtoReflect.Descriptor instead.
+func (*Finished) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *Finished) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *Finished) GetSlotId() int32 {
+	if x != nil {
+		return x.SlotId
+	}
+	return 0
+}
+
+func (x *Finished) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *Finished) GetTokensGenerated() int32 {
+	if x != nil {
+		return x.TokensGenerated
+	}
+	return 0
+}
+
+type Rejected struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Rejected) Reset() {
+	*x = Rejected{}
+	mi := &file_inference_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Rejected) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Rejected) ProtoMessage() {}
+
+func (x *Rejected) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Rejected.ProtoReflect.Descriptor instead.
+func (*Rejected) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *Rejected) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *Rejected) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type StepStats struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Step          int64                  `protobuf:"varint,1,opt,name=step,proto3" json:"step,omitempty"`
+	ActiveSlots   int32                  `protobuf:"varint,2,opt,name=active_slots,json=activeSlots,proto3" json:"active_slots,omitempty"`
+	FreeSlots     int32                  `protobuf:"varint,3,opt,name=free_slots,json=freeSlots,proto3" json:"free_slots,omitempty"`
+	Waiting       int32                  `protobuf:"varint,4,opt,name=waiting,proto3" json:"waiting,omitempty"`
+	BatchTokens   int32                  `protobuf:"varint,5,opt,name=batch_tokens,json=batchTokens,proto3" json:"batch_tokens,omitempty"`       // batch.n_tokens
+	PrefillTokens int32                  `protobuf:"varint,6,opt,name=prefill_tokens,json=prefillTokens,proto3" json:"prefill_tokens,omitempty"` // how much of it was prefill
+	StepTimeUs    int32                  `protobuf:"varint,7,opt,name=step_time_us,json=stepTimeUs,proto3" json:"step_time_us,omitempty"`        // llama_decode wall time
+	KvUsed        int32                  `protobuf:"varint,8,opt,name=kv_used,json=kvUsed,proto3" json:"kv_used,omitempty"`                      // cells occupied, vs n_ctx
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StepStats) Reset() {
+	*x = StepStats{}
+	mi := &file_inference_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StepStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StepStats) ProtoMessage() {}
+
+func (x *StepStats) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StepStats.ProtoReflect.Descriptor instead.
+func (*StepStats) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *StepStats) GetStep() int64 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
+func (x *StepStats) GetActiveSlots() int32 {
+	if x != nil {
+		return x.ActiveSlots
+	}
+	return 0
+}
+
+func (x *StepStats) GetFreeSlots() int32 {
+	if x != nil {
+		return x.FreeSlots
+	}
+	return 0
+}
+
+func (x *StepStats) GetWaiting() int32 {
+	if x != nil {
+		return x.Waiting
+	}
+	return 0
+}
+
+func (x *StepStats) GetBatchTokens() int32 {
+	if x != nil {
+		return x.BatchTokens
+	}
+	return 0
+}
+
+func (x *StepStats) GetPrefillTokens() int32 {
+	if x != nil {
+		return x.PrefillTokens
+	}
+	return 0
+}
+
+func (x *StepStats) GetStepTimeUs() int32 {
+	if x != nil {
+		return x.StepTimeUs
+	}
+	return 0
+}
+
+func (x *StepStats) GetKvUsed() int32 {
+	if x != nil {
+		return x.KvUsed
+	}
+	return 0
+}
+
+type EngineEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*EngineEvent_Admitted
+	//	*EngineEvent_Token
+	//	*EngineEvent_Finished
+	//	*EngineEvent_Stats
+	//	*EngineEvent_Rejected
+	Payload       isEngineEvent_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EngineEvent) Reset() {
+	*x = EngineEvent{}
+	mi := &file_inference_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EngineEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EngineEvent) ProtoMessage() {}
+
+func (x *EngineEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_inference_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EngineEvent.ProtoReflect.Descriptor instead.
+func (*EngineEvent) Descriptor() ([]byte, []int) {
+	return file_inference_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *EngineEvent) GetPayload() isEngineEvent_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *EngineEvent) GetAdmitted() *Admitted {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineEvent_Admitted); ok {
+			return x.Admitted
+		}
+	}
+	return nil
+}
+
+func (x *EngineEvent) GetToken() *Token {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineEvent_Token); ok {
+			return x.Token
+		}
+	}
+	return nil
+}
+
+func (x *EngineEvent) GetFinished() *Finished {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineEvent_Finished); ok {
+			return x.Finished
+		}
+	}
+	return nil
+}
+
+func (x *EngineEvent) GetStats() *StepStats {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineEvent_Stats); ok {
+			return x.Stats
+		}
+	}
+	return nil
+}
+
+func (x *EngineEvent) GetRejected() *Rejected {
+	if x != nil {
+		if x, ok := x.Payload.(*EngineEvent_Rejected); ok {
+			return x.Rejected
+		}
+	}
+	return nil
+}
+
+type isEngineEvent_Payload interface {
+	isEngineEvent_Payload()
+}
+
+type EngineEvent_Admitted struct {
+	Admitted *Admitted `protobuf:"bytes,1,opt,name=admitted,proto3,oneof"`
+}
+
+type EngineEvent_Token struct {
+	Token *Token `protobuf:"bytes,2,opt,name=token,proto3,oneof"`
+}
+
+type EngineEvent_Finished struct {
+	Finished *Finished `protobuf:"bytes,3,opt,name=finished,proto3,oneof"`
+}
+
+type EngineEvent_Stats struct {
+	Stats *StepStats `protobuf:"bytes,4,opt,name=stats,proto3,oneof"`
+}
+
+type EngineEvent_Rejected struct {
+	Rejected *Rejected `protobuf:"bytes,5,opt,name=rejected,proto3,oneof"`
+}
+
+func (*EngineEvent_Admitted) isEngineEvent_Payload() {}
+
+func (*EngineEvent_Token) isEngineEvent_Payload() {}
+
+func (*EngineEvent_Finished) isEngineEvent_Payload() {}
+
+func (*EngineEvent_Stats) isEngineEvent_Payload() {}
+
+func (*EngineEvent_Rejected) isEngineEvent_Payload() {}
+
 var File_inference_proto protoreflect.FileDescriptor
 
 const file_inference_proto_rawDesc = "" +
@@ -248,10 +975,70 @@ const file_inference_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x1a\n" +
 	"\bfinished\x18\x03 \x01(\bR\bfinished\x12)\n" +
-	"\x10tokens_generated\x18\x04 \x01(\x05R\x0ftokensGenerated2\xa3\x01\n" +
+	"\x10tokens_generated\x18\x04 \x01(\x05R\x0ftokensGenerated\"\x7f\n" +
+	"\x05Admit\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
+	"\x06prompt\x18\x02 \x01(\tR\x06prompt\x12\x1d\n" +
+	"\n" +
+	"max_tokens\x18\x03 \x01(\x05R\tmaxTokens\x12 \n" +
+	"\vtemperature\x18\x04 \x01(\x02R\vtemperature\"'\n" +
+	"\x06Cancel\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\"q\n" +
+	"\rEngineRequest\x12(\n" +
+	"\x05admit\x18\x01 \x01(\v2\x10.inference.AdmitH\x00R\x05admit\x12+\n" +
+	"\x06cancel\x18\x02 \x01(\v2\x11.inference.CancelH\x00R\x06cancelB\t\n" +
+	"\apayload\"B\n" +
+	"\bAdmitted\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x17\n" +
+	"\aslot_id\x18\x02 \x01(\x05R\x06slotId\"\x84\x01\n" +
+	"\x05Token\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x17\n" +
+	"\aslot_id\x18\x02 \x01(\x05R\x06slotId\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12\x19\n" +
+	"\btoken_id\x18\x04 \x01(\x05R\atokenId\x12\x14\n" +
+	"\x05index\x18\x05 \x01(\x05R\x05index\"\x85\x01\n" +
+	"\bFinished\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x17\n" +
+	"\aslot_id\x18\x02 \x01(\x05R\x06slotId\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12)\n" +
+	"\x10tokens_generated\x18\x04 \x01(\x05R\x0ftokensGenerated\"A\n" +
+	"\bRejected\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x80\x02\n" +
+	"\tStepStats\x12\x12\n" +
+	"\x04step\x18\x01 \x01(\x03R\x04step\x12!\n" +
+	"\factive_slots\x18\x02 \x01(\x05R\vactiveSlots\x12\x1d\n" +
+	"\n" +
+	"free_slots\x18\x03 \x01(\x05R\tfreeSlots\x12\x18\n" +
+	"\awaiting\x18\x04 \x01(\x05R\awaiting\x12!\n" +
+	"\fbatch_tokens\x18\x05 \x01(\x05R\vbatchTokens\x12%\n" +
+	"\x0eprefill_tokens\x18\x06 \x01(\x05R\rprefillTokens\x12 \n" +
+	"\fstep_time_us\x18\a \x01(\x05R\n" +
+	"stepTimeUs\x12\x17\n" +
+	"\akv_used\x18\b \x01(\x05R\x06kvUsed\"\x89\x02\n" +
+	"\vEngineEvent\x121\n" +
+	"\badmitted\x18\x01 \x01(\v2\x13.inference.AdmittedH\x00R\badmitted\x12(\n" +
+	"\x05token\x18\x02 \x01(\v2\x10.inference.TokenH\x00R\x05token\x121\n" +
+	"\bfinished\x18\x03 \x01(\v2\x13.inference.FinishedH\x00R\bfinished\x12,\n" +
+	"\x05stats\x18\x04 \x01(\v2\x14.inference.StepStatsH\x00R\x05stats\x121\n" +
+	"\brejected\x18\x05 \x01(\v2\x13.inference.RejectedH\x00R\brejectedB\t\n" +
+	"\apayload*\x94\x01\n" +
+	"\fFinishReason\x12\x1d\n" +
+	"\x19FINISH_REASON_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11FINISH_REASON_EOS\x10\x01\x12\x18\n" +
+	"\x14FINSIH_REASON_LENGTH\x10\x02\x12\x1b\n" +
+	"\x17FINISH_REASON_CANCELLED\x10\x03\x12\x17\n" +
+	"\x13FINISH_REASON_ERROR\x10\x042\xe3\x01\n" +
 	"\tInference\x12C\n" +
 	"\bGenerate\x12\x1a.inference.GenerateRequest\x1a\x1b.inference.GenerateResponse\x12Q\n" +
-	"\x0eGenerateStream\x12\x1a.inference.GenerateRequest\x1a!.inference.GenerateStreamResponse0\x01B;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3"
+	"\x0eGenerateStream\x12\x1a.inference.GenerateRequest\x1a!.inference.GenerateStreamResponse0\x01\x12>\n" +
+	"\x06Engine\x12\x18.inference.EngineRequest\x1a\x16.inference.EngineEvent(\x010\x01B;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3"
 
 var (
 	file_inference_proto_rawDescOnce sync.Once
@@ -265,22 +1052,42 @@ func file_inference_proto_rawDescGZIP() []byte {
 	return file_inference_proto_rawDescData
 }
 
-var file_inference_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_inference_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_inference_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_inference_proto_goTypes = []any{
-	(*GenerateRequest)(nil),        // 0: inference.GenerateRequest
-	(*GenerateResponse)(nil),       // 1: inference.GenerateResponse
-	(*GenerateStreamResponse)(nil), // 2: inference.GenerateStreamResponse
+	(FinishReason)(0),              // 0: inference.FinishReason
+	(*GenerateRequest)(nil),        // 1: inference.GenerateRequest
+	(*GenerateResponse)(nil),       // 2: inference.GenerateResponse
+	(*GenerateStreamResponse)(nil), // 3: inference.GenerateStreamResponse
+	(*Admit)(nil),                  // 4: inference.Admit
+	(*Cancel)(nil),                 // 5: inference.Cancel
+	(*EngineRequest)(nil),          // 6: inference.EngineRequest
+	(*Admitted)(nil),               // 7: inference.Admitted
+	(*Token)(nil),                  // 8: inference.Token
+	(*Finished)(nil),               // 9: inference.Finished
+	(*Rejected)(nil),               // 10: inference.Rejected
+	(*StepStats)(nil),              // 11: inference.StepStats
+	(*EngineEvent)(nil),            // 12: inference.EngineEvent
 }
 var file_inference_proto_depIdxs = []int32{
-	0, // 0: inference.Inference.Generate:input_type -> inference.GenerateRequest
-	0, // 1: inference.Inference.GenerateStream:input_type -> inference.GenerateRequest
-	1, // 2: inference.Inference.Generate:output_type -> inference.GenerateResponse
-	2, // 3: inference.Inference.GenerateStream:output_type -> inference.GenerateStreamResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	4,  // 0: inference.EngineRequest.admit:type_name -> inference.Admit
+	5,  // 1: inference.EngineRequest.cancel:type_name -> inference.Cancel
+	7,  // 2: inference.EngineEvent.admitted:type_name -> inference.Admitted
+	8,  // 3: inference.EngineEvent.token:type_name -> inference.Token
+	9,  // 4: inference.EngineEvent.finished:type_name -> inference.Finished
+	11, // 5: inference.EngineEvent.stats:type_name -> inference.StepStats
+	10, // 6: inference.EngineEvent.rejected:type_name -> inference.Rejected
+	1,  // 7: inference.Inference.Generate:input_type -> inference.GenerateRequest
+	1,  // 8: inference.Inference.GenerateStream:input_type -> inference.GenerateRequest
+	6,  // 9: inference.Inference.Engine:input_type -> inference.EngineRequest
+	2,  // 10: inference.Inference.Generate:output_type -> inference.GenerateResponse
+	3,  // 11: inference.Inference.GenerateStream:output_type -> inference.GenerateStreamResponse
+	12, // 12: inference.Inference.Engine:output_type -> inference.EngineEvent
+	10, // [10:13] is the sub-list for method output_type
+	7,  // [7:10] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_inference_proto_init() }
@@ -288,18 +1095,30 @@ func file_inference_proto_init() {
 	if File_inference_proto != nil {
 		return
 	}
+	file_inference_proto_msgTypes[5].OneofWrappers = []any{
+		(*EngineRequest_Admit)(nil),
+		(*EngineRequest_Cancel)(nil),
+	}
+	file_inference_proto_msgTypes[11].OneofWrappers = []any{
+		(*EngineEvent_Admitted)(nil),
+		(*EngineEvent_Token)(nil),
+		(*EngineEvent_Finished)(nil),
+		(*EngineEvent_Stats)(nil),
+		(*EngineEvent_Rejected)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_inference_proto_rawDesc), len(file_inference_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   3,
+			NumEnums:      1,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_inference_proto_goTypes,
 		DependencyIndexes: file_inference_proto_depIdxs,
+		EnumInfos:         file_inference_proto_enumTypes,
 		MessageInfos:      file_inference_proto_msgTypes,
 	}.Build()
 	File_inference_proto = out.File

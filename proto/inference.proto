@@ -31,8 +31,84 @@ message GenerateStreamResponse {
     int32 tokens_generated = 4;
 }
 
+
+message Admit{
+    string request_id = 1;
+    string prompt = 2;
+    int32 max_tokens = 3;
+    float temperature = 4;
+}
+
+message Cancel {
+    string request_id = 1;
+}
+
+message EngineRequest{
+    oneof payload{
+        Admit admit = 1;
+        Cancel cancel = 2;
+    }
+}
+
+
+message Admitted {
+    string request_id = 1;
+    int32 slot_id = 2;
+}
+
+message Token {
+    string request_id = 1;
+    int32 slot_id = 2;
+    string text = 3;  // llama_token_to_piece output
+    int32 token_id = 4; // useful for debugging / detokenizer bugs
+    int32 index = 5;  // 0-based position in this request's output
+}
+
+enum FinishReason {
+    FINISH_REASON_UNSPECIFIED = 0;
+    FINISH_REASON_EOS = 1;
+    FINSIH_REASON_LENGTH = 2;
+    FINISH_REASON_CANCELLED = 3;
+    FINISH_REASON_ERROR = 4;
+}
+
+message Finished{
+    string request_id = 1;
+    int32 slot_id = 2;
+    string reason = 3;
+    int32 tokens_generated = 4;
+}
+
+message Rejected{
+    string request_id = 1;
+    string reason = 2;
+}
+
+message StepStats{
+    int64 step = 1;
+    int32 active_slots = 2;
+    int32 free_slots = 3;
+    int32 waiting = 4;
+    int32 batch_tokens = 5; // batch.n_tokens
+    int32 prefill_tokens = 6; // how much of it was prefill
+    int32 step_time_us = 7; // llama_decode wall time
+    int32 kv_used = 8; // cells occupied, vs n_ctx
+}
+
+message EngineEvent{
+    oneof payload{
+        Admitted admitted = 1;
+        Token token = 2;
+        Finished finished = 3;
+        StepStats stats = 4;
+        Rejected rejected = 5;
+    }
+}
+
 service Inference {
     rpc Generate (GenerateRequest) returns (GenerateResponse);
 
     rpc GenerateStream (GenerateRequest) returns (stream GenerateStreamResponse);
+
+    rpc Engine(stream EngineRequest) returns (stream EngineEvent);
 }

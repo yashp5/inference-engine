@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Inference_Generate_FullMethodName       = "/inference.Inference/Generate"
 	Inference_GenerateStream_FullMethodName = "/inference.Inference/GenerateStream"
+	Inference_Engine_FullMethodName         = "/inference.Inference/Engine"
 )
 
 // InferenceClient is the client API for Inference service.
@@ -29,6 +30,7 @@ const (
 type InferenceClient interface {
 	Generate(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (*GenerateResponse, error)
 	GenerateStream(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateStreamResponse], error)
+	Engine(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[EngineRequest, EngineEvent], error)
 }
 
 type inferenceClient struct {
@@ -68,12 +70,26 @@ func (c *inferenceClient) GenerateStream(ctx context.Context, in *GenerateReques
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Inference_GenerateStreamClient = grpc.ServerStreamingClient[GenerateStreamResponse]
 
+func (c *inferenceClient) Engine(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[EngineRequest, EngineEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Inference_ServiceDesc.Streams[1], Inference_Engine_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[EngineRequest, EngineEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Inference_EngineClient = grpc.BidiStreamingClient[EngineRequest, EngineEvent]
+
 // InferenceServer is the server API for Inference service.
 // All implementations must embed UnimplementedInferenceServer
 // for forward compatibility.
 type InferenceServer interface {
 	Generate(context.Context, *GenerateRequest) (*GenerateResponse, error)
 	GenerateStream(*GenerateRequest, grpc.ServerStreamingServer[GenerateStreamResponse]) error
+	Engine(grpc.BidiStreamingServer[EngineRequest, EngineEvent]) error
 	mustEmbedUnimplementedInferenceServer()
 }
 
@@ -89,6 +105,9 @@ func (UnimplementedInferenceServer) Generate(context.Context, *GenerateRequest) 
 }
 func (UnimplementedInferenceServer) GenerateStream(*GenerateRequest, grpc.ServerStreamingServer[GenerateStreamResponse]) error {
 	return status.Error(codes.Unimplemented, "method GenerateStream not implemented")
+}
+func (UnimplementedInferenceServer) Engine(grpc.BidiStreamingServer[EngineRequest, EngineEvent]) error {
+	return status.Error(codes.Unimplemented, "method Engine not implemented")
 }
 func (UnimplementedInferenceServer) mustEmbedUnimplementedInferenceServer() {}
 func (UnimplementedInferenceServer) testEmbeddedByValue()                   {}
@@ -140,6 +159,13 @@ func _Inference_GenerateStream_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Inference_GenerateStreamServer = grpc.ServerStreamingServer[GenerateStreamResponse]
 
+func _Inference_Engine_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(InferenceServer).Engine(&grpc.GenericServerStream[EngineRequest, EngineEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Inference_EngineServer = grpc.BidiStreamingServer[EngineRequest, EngineEvent]
+
 // Inference_ServiceDesc is the grpc.ServiceDesc for Inference service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -157,6 +183,12 @@ var Inference_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "GenerateStream",
 			Handler:       _Inference_GenerateStream_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "Engine",
+			Handler:       _Inference_Engine_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "inference.proto",
