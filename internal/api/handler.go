@@ -24,18 +24,27 @@ type Handler struct {
 	priorityQueue *queue.PriorityQueue
 	rateLimiter   RateLimiter
 	inflight      atomic.Int64
-	queueTimeout  time.Duration
-	agingInterval time.Duration
+	// queueTimeout bounds time-to-admission and is enforced by the dispatcher.
+	// requestTimeout bounds the whole request, generation included, and is the
+	// deadline on req.Ctx. Keeping them separate matters: req.Ctx.Done() is what
+	// triggers a Cancel to the worker, so putting the (short) queue timeout there
+	// would abort healthy generations mid-stream.
+	queueTimeout   time.Duration
+	requestTimeout time.Duration
+	agingInterval  time.Duration
+	engineStats    func() *types.EngineStats // nil when not in continuous batching mode
 }
 
-func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue, queueTimeout time.Duration, agingInterval time.Duration) *Handler {
+func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue, queueTimeout time.Duration, requestTimeout time.Duration, agingInterval time.Duration, engineStats func() *types.EngineStats) *Handler {
 	return &Handler{
-		inferClient:   inferClient,
-		conn:          conn,
-		rateLimiter:   r,
-		priorityQueue: pq,
-		queueTimeout:  queueTimeout,
-		agingInterval: agingInterval,
+		inferClient:    inferClient,
+		conn:           conn,
+		rateLimiter:    r,
+		priorityQueue:  pq,
+		queueTimeout:   queueTimeout,
+		requestTimeout: requestTimeout,
+		agingInterval:  agingInterval,
+		engineStats:    engineStats,
 	}
 }
 
@@ -70,10 +79,14 @@ func clientKey(r *http.Request) string {
 }
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, types.StatsResponse{
+	resp := types.StatsResponse{
 		QueueDepth: h.priorityQueue.Len(),
 		InFlight:   h.inflight.Load(),
-	})
+	}
+	if h.engineStats != nil {
+		resp.Engine = h.engineStats()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +122,7 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), h.queueTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.requestTimeout)
 	defer cancel()
 
 	var priority types.Priority
@@ -148,7 +161,11 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 		}
 	case resp := <-req.RespCh:
 		if resp.Error != nil {
-			writeJSON(w, http.StatusInternalServerError, types.ErrorResponse{RequestId: requestId, Error: resp.Error.Error()})
+			status := http.StatusInternalServerError
+			if errors.Is(resp.Error, types.ErrQueueTimeout) {
+				status = http.StatusGatewayTimeout
+			}
+			writeJSON(w, status, types.ErrorResponse{RequestId: requestId, Error: resp.Error.Error()})
 			return
 		}
 		resp.Body.TotalTimeMs = int(time.Since(req.ReceivedAt).Milliseconds())

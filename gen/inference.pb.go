@@ -26,7 +26,7 @@ type FinishReason int32
 const (
 	FinishReason_FINISH_REASON_UNSPECIFIED FinishReason = 0
 	FinishReason_FINISH_REASON_EOS         FinishReason = 1
-	FinishReason_FINSIH_REASON_LENGTH      FinishReason = 2
+	FinishReason_FINISH_REASON_LENGTH      FinishReason = 2
 	FinishReason_FINISH_REASON_CANCELLED   FinishReason = 3
 	FinishReason_FINISH_REASON_ERROR       FinishReason = 4
 )
@@ -36,14 +36,14 @@ var (
 	FinishReason_name = map[int32]string{
 		0: "FINISH_REASON_UNSPECIFIED",
 		1: "FINISH_REASON_EOS",
-		2: "FINSIH_REASON_LENGTH",
+		2: "FINISH_REASON_LENGTH",
 		3: "FINISH_REASON_CANCELLED",
 		4: "FINISH_REASON_ERROR",
 	}
 	FinishReason_value = map[string]int32{
 		"FINISH_REASON_UNSPECIFIED": 0,
 		"FINISH_REASON_EOS":         1,
-		"FINSIH_REASON_LENGTH":      2,
+		"FINISH_REASON_LENGTH":      2,
 		"FINISH_REASON_CANCELLED":   3,
 		"FINISH_REASON_ERROR":       4,
 	}
@@ -606,7 +606,7 @@ type Finished struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	SlotId          int32                  `protobuf:"varint,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
-	Reason          string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Reason          FinishReason           `protobuf:"varint,3,opt,name=reason,proto3,enum=inference.FinishReason" json:"reason,omitempty"`
 	TokensGenerated int32                  `protobuf:"varint,4,opt,name=tokens_generated,json=tokensGenerated,proto3" json:"tokens_generated,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -656,11 +656,11 @@ func (x *Finished) GetSlotId() int32 {
 	return 0
 }
 
-func (x *Finished) GetReason() string {
+func (x *Finished) GetReason() FinishReason {
 	if x != nil {
 		return x.Reason
 	}
-	return ""
+	return FinishReason_FINISH_REASON_UNSPECIFIED
 }
 
 func (x *Finished) GetTokensGenerated() int32 {
@@ -1000,12 +1000,12 @@ const file_inference_proto_rawDesc = "" +
 	"\aslot_id\x18\x02 \x01(\x05R\x06slotId\x12\x12\n" +
 	"\x04text\x18\x03 \x01(\tR\x04text\x12\x19\n" +
 	"\btoken_id\x18\x04 \x01(\x05R\atokenId\x12\x14\n" +
-	"\x05index\x18\x05 \x01(\x05R\x05index\"\x85\x01\n" +
+	"\x05index\x18\x05 \x01(\x05R\x05index\"\x9e\x01\n" +
 	"\bFinished\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x17\n" +
-	"\aslot_id\x18\x02 \x01(\x05R\x06slotId\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\x12)\n" +
+	"\aslot_id\x18\x02 \x01(\x05R\x06slotId\x12/\n" +
+	"\x06reason\x18\x03 \x01(\x0e2\x17.inference.FinishReasonR\x06reason\x12)\n" +
 	"\x10tokens_generated\x18\x04 \x01(\x05R\x0ftokensGenerated\"A\n" +
 	"\bRejected\x12\x1d\n" +
 	"\n" +
@@ -1032,7 +1032,7 @@ const file_inference_proto_rawDesc = "" +
 	"\fFinishReason\x12\x1d\n" +
 	"\x19FINISH_REASON_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11FINISH_REASON_EOS\x10\x01\x12\x18\n" +
-	"\x14FINSIH_REASON_LENGTH\x10\x02\x12\x1b\n" +
+	"\x14FINISH_REASON_LENGTH\x10\x02\x12\x1b\n" +
 	"\x17FINISH_REASON_CANCELLED\x10\x03\x12\x17\n" +
 	"\x13FINISH_REASON_ERROR\x10\x042\xe3\x01\n" +
 	"\tInference\x12C\n" +
@@ -1072,22 +1072,23 @@ var file_inference_proto_goTypes = []any{
 var file_inference_proto_depIdxs = []int32{
 	4,  // 0: inference.EngineRequest.admit:type_name -> inference.Admit
 	5,  // 1: inference.EngineRequest.cancel:type_name -> inference.Cancel
-	7,  // 2: inference.EngineEvent.admitted:type_name -> inference.Admitted
-	8,  // 3: inference.EngineEvent.token:type_name -> inference.Token
-	9,  // 4: inference.EngineEvent.finished:type_name -> inference.Finished
-	11, // 5: inference.EngineEvent.stats:type_name -> inference.StepStats
-	10, // 6: inference.EngineEvent.rejected:type_name -> inference.Rejected
-	1,  // 7: inference.Inference.Generate:input_type -> inference.GenerateRequest
-	1,  // 8: inference.Inference.GenerateStream:input_type -> inference.GenerateRequest
-	6,  // 9: inference.Inference.Engine:input_type -> inference.EngineRequest
-	2,  // 10: inference.Inference.Generate:output_type -> inference.GenerateResponse
-	3,  // 11: inference.Inference.GenerateStream:output_type -> inference.GenerateStreamResponse
-	12, // 12: inference.Inference.Engine:output_type -> inference.EngineEvent
-	10, // [10:13] is the sub-list for method output_type
-	7,  // [7:10] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	0,  // 2: inference.Finished.reason:type_name -> inference.FinishReason
+	7,  // 3: inference.EngineEvent.admitted:type_name -> inference.Admitted
+	8,  // 4: inference.EngineEvent.token:type_name -> inference.Token
+	9,  // 5: inference.EngineEvent.finished:type_name -> inference.Finished
+	11, // 6: inference.EngineEvent.stats:type_name -> inference.StepStats
+	10, // 7: inference.EngineEvent.rejected:type_name -> inference.Rejected
+	1,  // 8: inference.Inference.Generate:input_type -> inference.GenerateRequest
+	1,  // 9: inference.Inference.GenerateStream:input_type -> inference.GenerateRequest
+	6,  // 10: inference.Inference.Engine:input_type -> inference.EngineRequest
+	2,  // 11: inference.Inference.Generate:output_type -> inference.GenerateResponse
+	3,  // 12: inference.Inference.GenerateStream:output_type -> inference.GenerateStreamResponse
+	12, // 13: inference.Inference.Engine:output_type -> inference.EngineEvent
+	11, // [11:14] is the sub-list for method output_type
+	8,  // [8:11] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_inference_proto_init() }

@@ -33,7 +33,14 @@ func (d *Dispatcher) Start(ctx context.Context) {
 					if errors.Is(err, queue.ErrQueueEmpty) {
 						break
 					}
-					if req.Ctx.Err() != nil || time.Since(req.EnqueuedAt) > d.pq.QueueTimeout() {
+					if req.Ctx.Err() != nil {
+						// Caller is already gone; nobody is reading RespCh.
+						continue
+					}
+					if time.Since(req.EnqueuedAt) > d.pq.QueueTimeout() {
+						// Answer it. Dropping silently leaves the handler blocked
+						// until the much longer overall deadline fires.
+						req.RespCh <- &types.InferResponse{Error: types.ErrQueueTimeout}
 						continue
 					}
 					req.DispatchedAt = time.Now()

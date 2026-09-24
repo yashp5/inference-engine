@@ -9,12 +9,12 @@ class FinishReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     FINISH_REASON_UNSPECIFIED: _ClassVar[FinishReason]
     FINISH_REASON_EOS: _ClassVar[FinishReason]
-    FINSIH_REASON_LENGTH: _ClassVar[FinishReason]
+    FINISH_REASON_LENGTH: _ClassVar[FinishReason]
     FINISH_REASON_CANCELLED: _ClassVar[FinishReason]
     FINISH_REASON_ERROR: _ClassVar[FinishReason]
 FINISH_REASON_UNSPECIFIED: FinishReason
 FINISH_REASON_EOS: FinishReason
-FINSIH_REASON_LENGTH: FinishReason
+FINISH_REASON_LENGTH: FinishReason
 FINISH_REASON_CANCELLED: FinishReason
 FINISH_REASON_ERROR: FinishReason
 
@@ -110,9 +110,9 @@ class Finished(_message.Message):
     TOKENS_GENERATED_FIELD_NUMBER: _ClassVar[int]
     request_id: str
     slot_id: int
-    reason: str
+    reason: FinishReason
     tokens_generated: int
-    def __init__(self, request_id: _Optional[str] = ..., slot_id: _Optional[int] = ..., reason: _Optional[str] = ..., tokens_generated: _Optional[int] = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., slot_id: _Optional[int] = ..., reason: _Optional[_Union[FinishReason, str]] = ..., tokens_generated: _Optional[int] = ...) -> None: ...
 
 class Rejected(_message.Message):
     __slots__ = ("request_id", "reason")

@@ -2,11 +2,17 @@ package types
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
 
 const maxTokensUpperBound = 4096
+
+// ErrQueueTimeout means the request aged out of the priority queue before a
+// worker could pick it up. Distinct from the overall request deadline so the
+// API can answer 504 immediately instead of letting the caller block.
+var ErrQueueTimeout = errors.New("queue timeout")
 
 type CompletionsRequest struct {
 	RequestId   string  `json:"request_id"`
@@ -65,8 +71,24 @@ const (
 // past the rate limiter and not yet answered, so it includes whatever is still
 // sitting in the queue: InFlight-QueueDepth is roughly what the workers are on.
 type StatsResponse struct {
-	QueueDepth int   `json:"queue_depth"`
-	InFlight   int64 `json:"in_flight"`
+	QueueDepth int          `json:"queue_depth"`
+	InFlight   int64        `json:"in_flight"`
+	Engine     *EngineStats `json:"engine,omitempty"` // continuous batching only
+}
+
+// EngineStats is the worker's most recent StepStats. Nil until the first step
+// of an engine session, and reset to nil when the session ends so a dead
+// stream doesn't keep reporting its last healthy numbers.
+type EngineStats struct {
+	Step          int64     `json:"step"`
+	ActiveSlots   int       `json:"active_slots"`
+	FreeSlots     int       `json:"free_slots"`
+	Waiting       int       `json:"waiting"`
+	BatchTokens   int       `json:"batch_tokens"`
+	PrefillTokens int       `json:"prefill_tokens"`
+	StepTimeUs    int       `json:"step_time_us"`
+	KVUsed        int       `json:"kv_used"`
+	ObservedAt    time.Time `json:"observed_at"`
 }
 
 type InferResponse struct {

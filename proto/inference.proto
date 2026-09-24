@@ -67,7 +67,7 @@ message Token {
 enum FinishReason {
     FINISH_REASON_UNSPECIFIED = 0;
     FINISH_REASON_EOS = 1;
-    FINSIH_REASON_LENGTH = 2;
+    FINISH_REASON_LENGTH = 2;
     FINISH_REASON_CANCELLED = 3;
     FINISH_REASON_ERROR = 4;
 }
@@ -75,7 +75,7 @@ enum FinishReason {
 message Finished{
     string request_id = 1;
     int32 slot_id = 2;
-    string reason = 3;
+    FinishReason reason = 3;
     int32 tokens_generated = 4;
 }
 

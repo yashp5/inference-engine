@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"^\n\x0fGenerateRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_tokens\x18\x03 \x01(\x05\x12\x13\n\x0btemperature\x18\x04 \x01(\x02\"s\n\x10GenerateResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x16\n\x0egenerated_text\x18\x02 \x01(\t\x12\x18\n\x10tokens_generated\x18\x03 \x01(\x05\x12\x19\n\x11inference_time_ms\x18\x04 \x01(\x05\"g\n\x16GenerateStreamResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\x12\x10\n\x08\x66inished\x18\x03 \x01(\x08\x12\x18\n\x10tokens_generated\x18\x04 \x01(\x05\"T\n\x05\x41\x64mit\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_tokens\x18\x03 \x01(\x05\x12\x13\n\x0btemperature\x18\x04 \x01(\x02\"\x1c\n\x06\x43\x61ncel\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"b\n\rEngineRequest\x12!\n\x05\x61\x64mit\x18\x01 \x01(\x0b\x32\x10.inference.AdmitH\x00\x12#\n\x06\x63\x61ncel\x18\x02 \x01(\x0b\x32\x11.inference.CancelH\x00\x42\t\n\x07payload\"/\n\x08\x41\x64mitted\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0f\n\x07slot_id\x18\x02 \x01(\x05\"[\n\x05Token\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0f\n\x07slot_id\x18\x02 \x01(\x05\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x10\n\x08token_id\x18\x04 \x01(\x05\x12\r\n\x05index\x18\x05 \x01(\x05\"Y\n\x08\x46inished\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0f\n\x07slot_id\x18\x02 \x01(\x05\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12\x18\n\x10tokens_generated\x18\x04 \x01(\x05\".\n\x08Rejected\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\"\xa9\x01\n\tStepStats\x12\x0c\n\x04step\x18\x01 \x01(\x03\x12\x14\n\x0c\x61\x63tive_slots\x18\x02 \x01(\x05\x12\x12\n\nfree_slots\x18\x03 \x01(\x05\x12\x0f\n\x07waiting\x18\x04 \x01(\x05\x12\x14\n\x0c\x62\x61tch_tokens\x18\x05 \x01(\x05\x12\x16\n\x0eprefill_tokens\x18\x06 \x01(\x05\x12\x14\n\x0cstep_time_us\x18\x07 \x01(\x05\x12\x0f\n\x07kv_used\x18\x08 \x01(\x05\"\xdd\x01\n\x0b\x45ngineEvent\x12\'\n\x08\x61\x64mitted\x18\x01 \x01(\x0b\x32\x13.inference.AdmittedH\x00\x12!\n\x05token\x18\x02 \x01(\x0b\x32\x10.inference.TokenH\x00\x12\'\n\x08\x66inished\x18\x03 \x01(\x0b\x32\x13.inference.FinishedH\x00\x12%\n\x05stats\x18\x04 \x01(\x0b\x32\x14.inference.StepStatsH\x00\x12\'\n\x08rejected\x18\x05 \x01(\x0b\x32\x13.inference.RejectedH\x00\x42\t\n\x07payload*\x94\x01\n\x0c\x46inishReason\x12\x1d\n\x19\x46INISH_REASON_UNSPECIFIED\x10\x00\x12\x15\n\x11\x46INISH_REASON_EOS\x10\x01\x12\x18\n\x14\x46INSIH_REASON_LENGTH\x10\x02\x12\x1b\n\x17\x46INISH_REASON_CANCELLED\x10\x03\x12\x17\n\x13\x46INISH_REASON_ERROR\x10\x04\x32\xe3\x01\n\tInference\x12\x43\n\x08Generate\x12\x1a.inference.GenerateRequest\x1a\x1b.inference.GenerateResponse\x12Q\n\x0eGenerateStream\x12\x1a.inference.GenerateRequest\x1a!.inference.GenerateStreamResponse0\x01\x12>\n\x06\x45ngine\x12\x18.inference.EngineRequest\x1a\x16.inference.EngineEvent(\x01\x30\x01\x42;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"^\n\x0fGenerateRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_tokens\x18\x03 \x01(\x05\x12\x13\n\x0btemperature\x18\x04 \x01(\x02\"s\n\x10GenerateResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x16\n\x0egenerated_text\x18\x02 \x01(\t\x12\x18\n\x10tokens_generated\x18\x03 \x01(\x05\x12\x19\n\x11inference_time_ms\x18\x04 \x01(\x05\"g\n\x16GenerateStreamResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\x12\x10\n\x08\x66inished\x18\x03 \x01(\x08\x12\x18\n\x10tokens_generated\x18\x04 \x01(\x05\"T\n\x05\x41\x64mit\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_tokens\x18\x03 \x01(\x05\x12\x13\n\x0btemperature\x18\x04 \x01(\x02\"\x1c\n\x06\x43\x61ncel\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"b\n\rEngineRequest\x12!\n\x05\x61\x64mit\x18\x01 \x01(\x0b\x32\x10.inference.AdmitH\x00\x12#\n\x06\x63\x61ncel\x18\x02 \x01(\x0b\x32\x11.inference.CancelH\x00\x42\t\n\x07payload\"/\n\x08\x41\x64mitted\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0f\n\x07slot_id\x18\x02 \x01(\x05\"[\n\x05Token\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0f\n\x07slot_id\x18\x02 \x01(\x05\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x10\n\x08token_id\x18\x04 \x01(\x05\x12\r\n\x05index\x18\x05 \x01(\x05\"r\n\x08\x46inished\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0f\n\x07slot_id\x18\x02 \x01(\x05\x12\'\n\x06reason\x18\x03 \x01(\x0e\x32\x17.inference.FinishReason\x12\x18\n\x10tokens_generated\x18\x04 \x01(\x05\".\n\x08Rejected\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\"\xa9\x01\n\tStepStats\x12\x0c\n\x04step\x18\x01 \x01(\x03\x12\x14\n\x0c\x61\x63tive_slots\x18\x02 \x01(\x05\x12\x12\n\nfree_slots\x18\x03 \x01(\x05\x12\x0f\n\x07waiting\x18\x04 \x01(\x05\x12\x14\n\x0c\x62\x61tch_tokens\x18\x05 \x01(\x05\x12\x16\n\x0eprefill_tokens\x18\x06 \x01(\x05\x12\x14\n\x0cstep_time_us\x18\x07 \x01(\x05\x12\x0f\n\x07kv_used\x18\x08 \x01(\x05\"\xdd\x01\n\x0b\x45ngineEvent\x12\'\n\x08\x61\x64mitted\x18\x01 \x01(\x0b\x32\x13.inference.AdmittedH\x00\x12!\n\x05token\x18\x02 \x01(\x0b\x32\x10.inference.TokenH\x00\x12\'\n\x08\x66inished\x18\x03 \x01(\x0b\x32\x13.inference.FinishedH\x00\x12%\n\x05stats\x18\x04 \x01(\x0b\x32\x14.inference.StepStatsH\x00\x12\'\n\x08rejected\x18\x05 \x01(\x0b\x32\x13.inference.RejectedH\x00\x42\t\n\x07payload*\x94\x01\n\x0c\x46inishReason\x12\x1d\n\x19\x46INISH_REASON_UNSPECIFIED\x10\x00\x12\x15\n\x11\x46INISH_REASON_EOS\x10\x01\x12\x18\n\x14\x46INISH_REASON_LENGTH\x10\x02\x12\x1b\n\x17\x46INISH_REASON_CANCELLED\x10\x03\x12\x17\n\x13\x46INISH_REASON_ERROR\x10\x04\x32\xe3\x01\n\tInference\x12\x43\n\x08Generate\x12\x1a.inference.GenerateRequest\x1a\x1b.inference.GenerateResponse\x12Q\n\x0eGenerateStream\x12\x1a.inference.GenerateRequest\x1a!.inference.GenerateStreamResponse0\x01\x12>\n\x06\x45ngine\x12\x18.inference.EngineRequest\x1a\x16.inference.EngineEvent(\x01\x30\x01\x42;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,8 +32,8 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'inference_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z9github.com/yashp5/inference-serving-infra/gen;inferencepb'
-  _globals['_FINISHREASON']._serialized_start=1242
-  _globals['_FINISHREASON']._serialized_end=1390
+  _globals['_FINISHREASON']._serialized_start=1267
+  _globals['_FINISHREASON']._serialized_end=1415
   _globals['_GENERATEREQUEST']._serialized_start=30
   _globals['_GENERATEREQUEST']._serialized_end=124
   _globals['_GENERATERESPONSE']._serialized_start=126
@@ -51,13 +51,13 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_TOKEN']._serialized_start=613
   _globals['_TOKEN']._serialized_end=704
   _globals['_FINISHED']._serialized_start=706
-  _globals['_FINISHED']._serialized_end=795
-  _globals['_REJECTED']._serialized_start=797
-  _globals['_REJECTED']._serialized_end=843
-  _globals['_STEPSTATS']._serialized_start=846
-  _globals['_STEPSTATS']._serialized_end=1015
-  _globals['_ENGINEEVENT']._serialized_start=1018
-  _globals['_ENGINEEVENT']._serialized_end=1239
-  _globals['_INFERENCE']._serialized_start=1393
-  _globals['_INFERENCE']._serialized_end=1620
+  _globals['_FINISHED']._serialized_end=820
+  _globals['_REJECTED']._serialized_start=822
+  _globals['_REJECTED']._serialized_end=868
+  _globals['_STEPSTATS']._serialized_start=871
+  _globals['_STEPSTATS']._serialized_end=1040
+  _globals['_ENGINEEVENT']._serialized_start=1043
+  _globals['_ENGINEEVENT']._serialized_end=1264
+  _globals['_INFERENCE']._serialized_start=1418
+  _globals['_INFERENCE']._serialized_end=1645
 # @@protoc_insertion_point(module_scope)
