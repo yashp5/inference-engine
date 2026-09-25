@@ -292,7 +292,7 @@ class Engine:
             )
         )
 
-    def _drain(self, inbox: Queue, block: bool) -> Tuple[bool, List[inference_pb2.EngineEvent]]:
+    def _drain(self, inbox: "Queue[Optional[inference_pb2.EngineRequest]]", block: bool) -> Tuple[bool, List[inference_pb2.EngineEvent]]:
         events: List[inference_pb2.EngineEvent] = []
         half_closed = False
         blocking = block
@@ -316,7 +316,7 @@ class Engine:
                 log.warning("EngineRequest with no payload")
         return half_closed, events
 
-    def run(self, inbox: Queue) -> Iterator[inference_pb2.EngineEvent]:
+    def run(self, inbox: "Queue[Optional[inference_pb2.EngineRequest]]") -> Iterator[inference_pb2.EngineEvent]:
         closed = False
         backoff = False
 

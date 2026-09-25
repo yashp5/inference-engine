@@ -1,0 +1,7 @@
+{
+  "executionEnvironments": [
+    { "root": "cmd/worker", "extraPaths": ["cmd/worker", "cmd/worker/tests"] }
+  ],
+  "venvPath": ".",
+  "venv": "venv"
+}

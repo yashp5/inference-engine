@@ -188,7 +188,7 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
                 )
                 return
 
-            inbox: queue.Queue = queue.Queue()
+            inbox: "queue.Queue[Optional[inference_pb2.EngineRequest]]" = queue.Queue()
 
             def reader() -> None:
                 # Decoupled from the step loop: run() cannot block on request
