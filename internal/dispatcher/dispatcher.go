@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/yashp5/inference-serving-infra/internal/queue"
-	"github.com/yashp5/inference-serving-infra/internal/types"
+	"github.com/yashp5/inference-engine/internal/queue"
+	"github.com/yashp5/inference-engine/internal/types"
 )
 
 type Dispatcher struct {

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	inferencepb "github.com/yashp5/inference-serving-infra/gen"
-	"github.com/yashp5/inference-serving-infra/internal/queue"
-	"github.com/yashp5/inference-serving-infra/internal/types"
+	inferencepb "github.com/yashp5/inference-engine/gen"
+	"github.com/yashp5/inference-engine/internal/queue"
+	"github.com/yashp5/inference-engine/internal/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 )

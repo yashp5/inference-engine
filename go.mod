@@ -1,4 +1,4 @@
-module github.com/yashp5/inference-serving-infra
+module github.com/yashp5/inference-engine
 
 go 1.26.1
 

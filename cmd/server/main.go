@@ -9,14 +9,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yashp5/inference-serving-infra/internal/api"
-	"github.com/yashp5/inference-serving-infra/internal/batcher"
-	"github.com/yashp5/inference-serving-infra/internal/config"
-	"github.com/yashp5/inference-serving-infra/internal/dispatcher"
-	"github.com/yashp5/inference-serving-infra/internal/queue"
-	"github.com/yashp5/inference-serving-infra/internal/scheduler"
-	"github.com/yashp5/inference-serving-infra/internal/types"
-	"github.com/yashp5/inference-serving-infra/internal/worker"
+	"github.com/yashp5/inference-engine/internal/api"
+	"github.com/yashp5/inference-engine/internal/batcher"
+	"github.com/yashp5/inference-engine/internal/config"
+	"github.com/yashp5/inference-engine/internal/dispatcher"
+	"github.com/yashp5/inference-engine/internal/queue"
+	"github.com/yashp5/inference-engine/internal/scheduler"
+	"github.com/yashp5/inference-engine/internal/types"
+	"github.com/yashp5/inference-engine/internal/worker"
 )
 
 func main() {

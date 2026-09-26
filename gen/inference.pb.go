@@ -1038,7 +1038,7 @@ const file_inference_proto_rawDesc = "" +
 	"\tInference\x12C\n" +
 	"\bGenerate\x12\x1a.inference.GenerateRequest\x1a\x1b.inference.GenerateResponse\x12Q\n" +
 	"\x0eGenerateStream\x12\x1a.inference.GenerateRequest\x1a!.inference.GenerateStreamResponse0\x01\x12>\n" +
-	"\x06Engine\x12\x18.inference.EngineRequest\x1a\x16.inference.EngineEvent(\x010\x01B;Z9github.com/yashp5/inference-serving-infra/gen;inferencepbb\x06proto3"
+	"\x06Engine\x12\x18.inference.EngineRequest\x1a\x16.inference.EngineEvent(\x010\x01B4Z2github.com/yashp5/inference-engine/gen;inferencepbb\x06proto3"
 
 var (
 	file_inference_proto_rawDescOnce sync.Once

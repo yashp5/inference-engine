@@ -2,7 +2,7 @@ syntax = "proto3";
 
 // go_package tells protoc where to put the generated code in the Go module
 // format: "module_path/gen;package_alias"
-option go_package = "github.com/yashp5/inference-serving-infra/gen;inferencepb";
+option go_package = "github.com/yashp5/inference-engine/gen;inferencepb";
 
 package inference;
 

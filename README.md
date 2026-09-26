@@ -1,4 +1,4 @@
-# inference-serving-infra
+# inference-engine
 
 curl → Go server → Python worker → response
 
