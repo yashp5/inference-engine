@@ -5,6 +5,7 @@ GEN_DIR          = gen
 PYTHON_GEN_DIR   = cmd/worker
 SERVER_BIN       = $(BINARY_DIR)/server
 PYTHON           = python3.14
+WORKER_PY ?= venv/bin/python
 
 # Automatically picks up every .proto file in proto/ —
 # no need to manually list them when you add new ones
@@ -74,6 +75,20 @@ run:
 run-worker:
 	$(PYTHON) cmd/worker/worker.py
 
+
+# --- test ------------------------------------------------------------------------
+.PHONY: test-engine test-worker test-e2e test
+test-engine:
+	cd cmd/worker && $(WORKER_PY) -m pytest tests/test_engine.py -v
+
+test-worker:
+	cd cmd/worker && $(WORKER_PY) -m pytest tests/test_worker_grpc.py -v -s
+
+test-e2e:
+	go test -tags e2e -v -count=1 -timeout 10m ./test/e2e/
+
+test: test-engine test-worker test-e2e
+
 # ── clean ──────────────────────────────────────────────────────────────────────
 # Removes all generated files (Go + Python) and compiled binaries
 .PHONY: clean
@@ -94,14 +109,21 @@ help:
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
-	@echo "  generate      Compile all .proto files → Go (gen/) + Python (cmd/woker/)"
+	@echo "  generate      Compile all .proto files → Go (gen/) + Python (cmd/worker/)"
 	@echo "  build         Build the Go server binary into bin/"
 	@echo "  run           Run the Go server with go run"
 	@echo "  run-worker    Run the Python gRPC worker"
+	@echo "  test          Run test-engine, test-worker, then test-e2e"
+	@echo "  test-engine   Run the in-process engine tests (tests/test_engine.py)"
+	@echo "  test-worker   Start the worker and run the gRPC tests (tests/test_worker_grpc.py)"
+	@echo "  test-e2e      Run the Go end-to-end tests (test/e2e/)"
 	@echo "  clean         Remove all generated files and binaries"
 	@echo "  all           generate + build  (default)"
 	@echo ""
 	@echo "Variables:"
-	@echo "  PYTHON        Python interpreter to use (default: python3.11)"
+	@echo "  PYTHON        Python interpreter to use (default: python3.14)"
 	@echo "                Example: make generate PYTHON=python3.12"
+	@echo "  WORKER_PY     Python used by the test targets, relative to cmd/worker/"
+	@echo "                (default: venv/bin/python, i.e. cmd/worker/venv)"
+	@echo "                Example: make test WORKER_PY=../../venv/bin/python"
 	@echo ""
