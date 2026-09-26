@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/yashp5/inference-serving-infra/internal/types"
+	"github.com/yashp5/inference-engine/internal/types"
 )
 
 type Batcher struct {

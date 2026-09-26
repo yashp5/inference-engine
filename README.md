@@ -1,4 +1,4 @@
-# inference-serving-infra
+# inference-engine
 
 curl → Go server → Python worker → response
 
@@ -11,61 +11,78 @@ The Go server acts as the control plane — handling HTTP routing, request queui
 ## Architecture
 
 ```
-                    ┌─────────────────────────────────────────────┐
-                    │              Go HTTP Server                 │
-                    │                                             │
-  HTTP Request ───► │  Validate ─► Queue ─► Batch ─► Dispatch     │
-                    │                                     │       │
-                    │                                     ▼       │
-                    │                              gRPC Client    │
-                    └─────────────────────────────────┬───────────┘
-                                                      │
-                                                      │ gRPC (TCP)
-                                                      │
-                    ┌─────────────────────────────────▼───────────┐
-                    │            Python Worker                    │
-                    │                                             │
-                    │   gRPC Server ─► llama-cpp-python ─► Model  │
-                    └─────────────────────────────────────────────┘
+                  ┌──────────────────────────────────────────────────────────┐
+                  │                      Go HTTP Server                      │
+                  │                                                          │
+  HTTP Request ─► │  Rate limit ─► Validate ─► Priority queue ─► Dispatcher  │
+                  │                                                  │       │
+                  │             ┌────────────────────────────────────┤       │
+                  │             ▼                                    ▼       │
+                  │ static:  Batcher ─► Scheduler     continuous: Engine     │
+                  │                         │                        │       │
+                  └─────────────────────────┼────────────────────────┼───────┘
+                       GenerateStream,      │      gRPC (TCP)        │ Engine,
+                       one per request      │                        │ one bidi stream
+                  ┌─────────────────────────▼────────────────────────▼───────┐
+                  │                      Python Worker                       │
+                  │                                                          │
+                  │  Llama instance behind             engine.py: n slots,   │
+                  │  a lock: one request               one llama_decode per  │
+                  │  at a time                         step across all slots │
+                  └──────────────────────────────────────────────────────────┘
 ```
+
+The server runs in one of two modes, chosen at startup:
+
+- **Static batching** (default): the Batcher groups requests by size or time, and the Scheduler hands each batch to a worker pool that makes one `GenerateStream` call per request.
+- **Continuous batching** (`-continuousBatching`): the Engine keeps a single bidirectional `Engine` stream open to the worker and admits or cancels requests on it. The worker assigns requests to slots and decodes every active slot in one forward pass per step.
 
 ## Project Structure
 
 ```
-inference-serving-infra/
+inference-engine/
 ├── cmd/
-│   └── server/
-│       └── main.go                 # Server entry point
+│   ├── server/
+│   │   └── main.go                 # Server entry point; wires static or continuous mode
+│   └── worker/
+│       ├── worker.py               # Python gRPC worker (Generate, GenerateStream, Engine RPCs)
+│       ├── engine.py               # Continuous batching engine: slot scheduler over one llama_context
+│       ├── drive.py                # Drives engine.py directly, without gRPC
+│       ├── inference_pb2*.py(i)    # Generated protobuf code (Python)
+│       └── tests/                  # pytest: engine tests and worker gRPC tests
 ├── internal/
 │   ├── api/
-│   │   ├── handler.go              # HTTP handlers
-│   │   └── types.go                # Request/response types
-│   ├── worker/
-│   │   └── client.go               # gRPC client wrapper
+│   │   ├── server.go               # Route registration
+│   │   ├── handler.go              # HTTP handlers: /v1/completions, /healthz, /stats
+│   │   └── ratelimiter.go          # Per-client token bucket rate limiter
+│   ├── config/
+│   │   └── config.go               # Command-line flags
+│   ├── types/
+│   │   └── types.go                # Request/response types and validation
 │   ├── queue/
-│   │   └── queue.go                # Priority request queue
+│   │   └── queue.go                # Priority queue with aging
+│   ├── dispatcher/
+│   │   └── dispatcher.go           # Pops the queue, enforces the queue timeout
 │   ├── batcher/
-│   │   └── batcher.go              # Dynamic batch accumulator
+│   │   └── batcher.go              # Dynamic batch accumulator (static mode)
 │   ├── scheduler/
-│   │   └── scheduler.go            # Continuous batching scheduler
-│   ├── registry/
-│   │   └── registry.go             # Multi-model management
-│   ├── balancer/
-│   │   └── balancer.go             # Load balancer & routing
-│   └── metrics/
-│       └── metrics.go              # Prometheus metrics
+│   │   └── scheduler.go            # Static-mode worker pool and continuous-mode Engine client
+│   └── worker/
+│       └── client.go               # gRPC client constructor
 ├── proto/
 │   └── inference.proto             # gRPC service definition
-├── gen/                            # Generated protobuf code
-├── worker/
-│   └── worker.py                   # Python inference worker
+├── gen/                            # Generated protobuf code (Go)
 ├── bench/
 │   └── loadtest.go                 # Load testing tool
+├── test/
+│   └── e2e/
+│       └── e2e_test.go             # End-to-end tests against a real server and worker
+├── transformer/                    # Separate track: a GPT model and distributed training in PyTorch
 ├── go.mod
 ├── go.sum
 ├── Makefile
-├── requirements.txt                 # Python worker dependencies
-├── MULTIMODAL.md                    # Notes on extending toward multimodal/voice serving
+├── requirements.txt                # Python dependencies
+├── MULTIMODAL.md                   # Notes on extending toward multimodal/voice serving
 └── README.md
 ```
 
@@ -73,33 +90,35 @@ inference-serving-infra/
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.26+ (see `go.mod`)
 - Python 3.10+
-- protoc with protoc-gen-go and protoc-gen-go-grpc
-- A GGUF model file (e.g., TinyLlama 1.1B Q4_K_M)
+- A GGUF model file (e.g., TinyLlama 1.1B Chat Q4_K_M)
+- To regenerate protobuf code only: `protoc` with `protoc-gen-go` and `protoc-gen-go-grpc`. The generated code is committed (`gen/` and `cmd/worker/inference_pb2*`), so you don't need these to run the project.
 
 ### Setup
 
 ```bash
 # Clone the repo
-git clone https://github.com/yashp5/inference-serving-infra.git
-cd inference-serving-infra
+git clone https://github.com/yashp5/inference-engine.git
+cd inference-engine
 
-# Generate protobuf code
-make proto
-
-# Install Python dependencies
-pip install grpcio grpcio-tools llama-cpp-python
+# Python environment. The Makefile test targets and the e2e test expect it at cmd/worker/venv.
+# (requirements.txt also installs torch and wandb for transformer/; the worker itself
+# needs grpcio, grpcio-tools, grpcio-reflection, protobuf and llama-cpp-python.)
+python3 -m venv cmd/worker/venv
+cmd/worker/venv/bin/pip install -r requirements.txt
 
 # Download a model (example)
 mkdir -p models/
-# Place your .gguf file in models/
+# Place your .gguf file in models/, then point MODEL_PATH at it.
+# The worker's --model-path overrides this, but the tests read MODEL_PATH only.
+export MODEL_PATH=$PWD/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 
 # Start the Python worker
-python worker/worker.py --model-path models/tinyllama-1.1b-q4_k_m.gguf --port 50051
+cmd/worker/venv/bin/python cmd/worker/worker.py --model-path "$MODEL_PATH" --port 50051
 
 # Start the Go server (in a separate terminal)
-go run cmd/server/main.go --worker-addr localhost:50051
+go run ./cmd/server -workerAddr 127.0.0.1:50051
 
 # Test
 curl -X POST http://localhost:8080/v1/completions \
@@ -107,9 +126,80 @@ curl -X POST http://localhost:8080/v1/completions \
   -d '{"prompt": "Once upon a time", "max_tokens": 50, "temperature": 0.7}'
 ```
 
+To use continuous batching instead of the default static batching, start both sides with the same slot count:
+
+```bash
+cmd/worker/venv/bin/python cmd/worker/worker.py --model-path "$MODEL_PATH" --engine-slots 8
+go run ./cmd/server -continuousBatching -engineSlots 8
+```
+
+To regenerate protobuf code after editing `proto/inference.proto`:
+
+```bash
+make generate PYTHON=cmd/worker/venv/bin/python
+```
+
+### Tests
+
+```bash
+make test-engine   # engine.py, in process (pytest)
+make test-worker   # starts worker.py and exercises its gRPC API (pytest)
+make test-e2e      # builds the server with -race, starts a real worker, tests continuous batching end to end
+make test          # all three
+```
+
+All three need a model at `MODEL_PATH`. The Python tests skip when it's missing; the e2e test fails. The e2e test runs the worker with `cmd/worker/venv/bin/python` unless `WORKER_PYTHON` is set.
+
+### Configuration
+
+Go server flags (`go run ./cmd/server -h`):
+
+| Flag | Default | Purpose |
+| :--- | :--- | :--- |
+| `-httpAddr` | `127.0.0.1:8080` | HTTP listen address |
+| `-workerAddr` | `127.0.0.1:50051` | Worker gRPC address |
+| `-continuousBatching` | `false` | Use the `Engine` bidi stream instead of static batching |
+| `-engineSlots` | `8` | Continuous mode: slot count; must match the worker's `--engine-slots` |
+| `-maxBatchSize` | `8` | Static mode: max requests per batch (`1` disables batching) |
+| `-maxBatchWait` | `10ms` | Static mode: max wait after the first request enters a batch |
+| `-workerCount` | `4` | Static mode: scheduler worker goroutines |
+| `-maxInFlight` | `10` | Static mode: cap on concurrent calls to the worker |
+| `-maxQueueDepth` | `1000` | Queue capacity; 429 beyond it |
+| `-queueTimeout` | `5s` | Max wait for admission; 504 beyond it |
+| `-requestTimeout` | `60s` | Deadline for the whole request, generation included |
+| `-agingInterval` | `5s` | Queue wait that raises a request one priority level |
+| `-rateLimit` | `false` | Enable per-client rate limiting |
+| `-rateLimitN`, `-rateLimitWindow` | `100`, `1s` | Token bucket: N requests per window |
+| `-rateLimitBucketTTL` | `5m` | Drop a client's bucket after this long idle |
+| `-rateLimitSweepInterval` | `1m` | How often idle buckets are swept |
+
+Python worker flags (`cmd/worker/worker.py`):
+
+| Flag | Default | Purpose |
+| :--- | :--- | :--- |
+| `--model-path` | `$MODEL_PATH` | GGUF model to load |
+| `--port` | `50051` (`$WORKER_PORT`) | gRPC port |
+| `--engine-slots` | `8` | Continuous batching slots (KV sequences) |
+| `--engine-per-seq-ctx` | `512` | Context per sequence; engine `n_ctx` = slots × this |
+| `--llm-n-ctx` | `512` | Context for the `Llama` instance used in static mode |
+| `--max-threads` | `4` (`$WORKER_MAX_THREADS`) | gRPC thread pool; must exceed the number of concurrent long-lived streams |
+
 ## Build Phases
 
 The project is built incrementally. Each phase adds a layer of complexity that addresses a real production concern.
+
+| Phase | Status |
+| :--- | :--- |
+| 1. Single model, single request server | Done |
+| 2. Request queue and concurrency control | Done |
+| 3. Dynamic batching | Done (batches form in Go; see the note in Phase 3) |
+| 4. Continuous batching | Done |
+| 5. Multi-model management and memory | Not started |
+| 6. Observability and metrics | Partial: `/healthz` and `/stats` |
+| 7. Horizontal scaling and load balancing | Not started |
+| 8. KV cache management | Not started |
+
+The load tester supports the benchmarks each phase describes, but no results are committed yet (`*.csv` is gitignored).
 
 ### Phase 1 — Single Model, Single Request Server
 
@@ -120,8 +210,8 @@ The foundation: a Go HTTP server that proxies inference requests to a Python gRP
 - Python worker that loads a GGUF model via `llama-cpp-python` and serves inference over gRPC
 - Go HTTP server with `POST /v1/completions` endpoint
 - Input validation (non-empty prompt, max_tokens bounds, temperature range)
-- Per-request latency tracking: total time, gRPC call time, overhead
-- Request ID generation (UUID) in the Go server
+- Per-request latency tracking: queue time, inference time, total time
+- Request ID generation (UUIDv7) in the Go server
 
 **Key design decisions:**
 - Go handles the control plane (HTTP, routing, scheduling); Python handles the data plane (GPU/CPU inference). This separation is how production serving systems work.
@@ -136,18 +226,18 @@ The foundation: a Go HTTP server that proxies inference requests to a Python gRP
 
 The model can only handle a limited number of concurrent requests. This phase adds admission control, queuing, and fairness.
 
-**What to build:**
-- In-memory priority queue using `container/heap` to buffer incoming requests
-- Concurrency limiter using a semaphore pattern (buffered channel of size N) to cap in-flight requests to the worker
-- Dispatcher goroutine that pulls from the queue and sends to available worker slots
-- HTTP 429 (Too Many Requests) with `Retry-After` header when the queue is full
-- Per-user rate limiting with token buckets (`sync.Map` of token bucket structs)
-- Priority levels (high/medium/low) with starvation prevention
-- `context.Context` propagation throughout — if a client disconnects, cancel in-flight work
-- Configurable queue timeout: requests waiting longer than a deadline return HTTP 504
-- Separate tracking of queue wait time vs. inference time in metrics
+**What's built:**
+- In-memory priority queue using `container/heap` to buffer incoming requests (`internal/queue`)
+- Concurrency limit on calls to the worker: a semaphore (buffered channel, `-maxInFlight`) in static mode, and the engine's slot count (`-engineSlots`) in continuous mode
+- Dispatcher goroutine that pops the highest-priority request and hands it to the batcher or the engine
+- HTTP 429 (Too Many Requests) with `Retry-After` header when the queue is full (`-maxQueueDepth`)
+- Per-client rate limiting with token buckets, keyed by the `X-API-Key` header or else the client IP. The buckets live in a mutex-guarded map, and a sweeper drops idle ones. Off by default (`-rateLimit`)
+- Priority levels (`low`/`medium`/`high`, default `medium`) with aging for starvation prevention: every `-agingInterval` spent waiting raises a request one level, capped so a starved `low` can tie a fresh `high` but never outrank it
+- `context.Context` propagation throughout. Requests whose client has already gone are dropped at dispatch. A disconnect mid-generation cancels the worker call in static mode, and sends a `Cancel` that frees the slot in continuous mode
+- Configurable queue timeout: requests waiting longer than `-queueTimeout` return HTTP 504. `-requestTimeout` separately bounds the whole request, generation included
+- Queue wait and inference time reported separately (`queue_time_ms`, `inference_time_ms`)
 
-**Benchmarking:**
+**Benchmarking plan:**
 - Hit the server with increasing concurrency (1, 10, 50, 100, 500 concurrent requests)
 - Measure p50, p95, p99 latency, throughput (req/s), queue depth over time, rejection rate
 - Plot how these degrade as load increases
@@ -160,16 +250,18 @@ The model can only handle a limited number of concurrent requests. This phase ad
 
 The single most impactful optimization in inference serving. Instead of processing one request at a time, accumulate multiple requests and process them as a batch.
 
-**What to build:**
-- Batch accumulator goroutine that collects requests using two triggers:
-  - Batch reaches max size (e.g., 8 requests), OR
-  - Max wait time expires (e.g., 50ms since the first request entered the batch)
-- `select` statement with `time.After` for the timeout trigger
-- Fan-out logic: each request in the batch has a response channel; when batch results come back, route each result to the correct waiting HTTP handler
-- Pre-allocated send/receive buffers to minimize GC pressure during batching
+**What's built:**
+- Batch accumulator goroutine (`internal/batcher`) that collects requests using two triggers:
+  - Batch reaches max size (`-maxBatchSize`, default 8), OR
+  - Max wait time expires (`-maxBatchWait`, default 10ms since the first request entered the batch)
+- `select` statement with a `time.Timer` for the timeout trigger
+- Fan-out logic: each request in the batch has a response channel, so each result routes straight back to its waiting HTTP handler
+- Accumulator slice preallocated to the max batch size
 - Configurable batch size and max wait time as command-line flags
 
-**Benchmarking:**
+**Note:** batches form on the Go side only. The scheduler sends each request in a batch as its own `GenerateStream` call, and the worker serializes those calls on a single lock-guarded `Llama` instance. In this mode the model still runs one request at a time. Batched forward passes arrive with continuous batching in Phase 4.
+
+**Benchmarking plan:**
 - Compare throughput and latency against Phase 2 (no batching)
 - Under high load: batching should dramatically increase throughput
 - Under low load: should add minimal latency (just the max wait time at worst)
@@ -185,16 +277,20 @@ The single most impactful optimization in inference serving. Instead of processi
 
 What makes systems like vLLM special. Standard batching waits for all requests in a batch to finish before starting the next batch. Continuous batching lets new requests join at every decode step.
 
-**What to build:**
-- Streaming gRPC connection (or WebSocket) between Go scheduler and Python worker for per-token communication
-- Slot-based scheduler: maintain an array of active request slots in the current batch
-- At every decode step, the worker reports which slots finished (hit EOS or max tokens)
-- Scheduler immediately swaps in waiting requests to fill freed slots
-- The batch stays as full as possible at all times
+**What's built:**
+- Bidirectional streaming RPC, `Engine(stream EngineRequest) returns (stream EngineEvent)`. Go sends `Admit` and `Cancel`; the worker answers with `Admitted`, `Token`, `Finished`, `Rejected`, and a `StepStats` event every step
+- Slot-based scheduler in the worker (`cmd/worker/engine.py`): `n_slots` KV sequences share one `llama_context` (`n_ctx = slots × per_seq_ctx`), driven directly through the llama.cpp C API
+- Each step is one `llama_decode` over the next token of every active slot, plus the prefill of at most one newly admitted request, so a long prompt can't stall the other requests' inter-token latency
+- Slots freed by EOS, `max_tokens` or a cancel are refilled from the waiting queue on the next step. The batch stays as full as possible at all times
+- Admission guards: a prompt plus `max_tokens` that can't fit one sequence's context is rejected, and a prefill that doesn't fit the current batch waits. If the KV cache runs out of room, the new admission is rolled back; with no admission to roll back, the sequence using the most context is evicted with an error
+- Go client (`scheduler.Engine`): a slot semaphore sized to `-engineSlots`, a single sender goroutine that sends cancels before admits (gRPC `Send` isn't safe for concurrent use), and reconnects with exponential backoff. When the stream drops, every in-flight request is failed so no slot leaks
+- The latest `StepStats` are served at `GET /stats`
+- Enabled with `-continuousBatching`; `-engineSlots` must match the worker's `--engine-slots`
+- Tests: engine tests, worker gRPC tests, and a Go e2e suite covering concurrency above the slot count, client disconnects, rejections, and a worker crash with reconnect
 
 **Why it matters:** In LLM inference, different requests generate different numbers of tokens. With static batching, a request wanting 10 tokens holds its slot until the request wanting 500 tokens finishes. Continuous batching recovers those wasted cycles.
 
-**Benchmarking:**
+**Benchmarking plan:**
 - Compare GPU utilization and throughput against static batching (Phase 3)
 - Show improvement when generation lengths vary widely across requests
 
@@ -223,6 +319,8 @@ A real serving system runs multiple models and manages limited memory.
 ### Phase 6 — Observability and Metrics
 
 No production system exists without observability.
+
+**Status:** partial. `GET /healthz` reports the worker connection state, and `GET /stats` serves queue depth, in-flight requests and the latest engine step stats as JSON. The rest of this phase is still to build.
 
 **What to build:**
 - `/metrics` endpoint in Prometheus format using `prometheus/client_golang`:
@@ -294,12 +392,13 @@ Advanced but extremely relevant to current LLM infrastructure.
 {
   "prompt": "Once upon a time",
   "max_tokens": 100,
-  "temperature": 0.7
+  "temperature": 0.7,
+  "priority": "high"
 }
 
 // Response
 {
-  "request_id": "req_abc123",
+  "request_id": "0199a3f2-6c1e-7b4a-9d2e-5f8c1a7b3e90",
   "generated_text": "in a land far away...",
   "tokens_generated": 42,
   "inference_time_ms": 850,
@@ -308,25 +407,55 @@ Advanced but extremely relevant to current LLM infrastructure.
 }
 ```
 
+Validation: `prompt` must be non-empty, `max_tokens` between 1 and 4096, `temperature` between 0.0 and 2.0, and `priority` one of `low`, `medium` (the default) or `high`. When rate limiting is on, clients are identified by the `X-API-Key` header, or by IP without it.
+
+Errors return `{"request_id": "...", "error": "..."}`:
+
+| Status | When |
+| :--- | :--- |
+| 400 | Unreadable body or failed validation |
+| 429 | Rate limited, or queue full (with `Retry-After: 1`) |
+| 504 | Waited longer than `-queueTimeout` for admission, or exceeded `-requestTimeout` |
+| 500 | Worker error, or generation ended early (cancelled or evicted) |
+
 ### GET /healthz
-Returns 200 if the server is running.
+Returns 200 `{"status": "ok"}` when the gRPC connection to the worker is ready, and 503 with `worker_not_ready` or `worker_unavailable` otherwise.
 
-### GET /readyz
-Returns 200 if at least one model is loaded and ready to serve.
+### GET /stats
 
-### GET /metrics
-Prometheus-formatted metrics.
+```json
+{
+  "queue_depth": 3,
+  "in_flight": 11,
+  "engine": {
+    "step": 1842,
+    "active_slots": 8,
+    "free_slots": 0,
+    "waiting": 0,
+    "batch_tokens": 8,
+    "prefill_tokens": 0,
+    "step_time_us": 41250,
+    "kv_used": 1630,
+    "observed_at": "2026-09-26T12:00:00Z"
+  }
+}
+```
+
+`in_flight` counts requests past the rate limiter that haven't been answered, queued ones included. `engine` is the worker's latest step stats; it appears only in continuous mode while an engine stream is live.
 
 ## Benchmarking
 
-The `bench/` directory contains a load testing tool that sweeps across concurrency levels and measures latency percentiles, throughput, and error rates.
+`bench/loadtest.go` runs a fixed number of concurrent clients against the server and reports latency percentiles (p50/p95/p99), goodput, and counts of 429s, timeouts, and 5xx errors. It can sweep several concurrency levels in one run.
 
 ```bash
-# Run load test with 50 concurrent requests, 1000 total
-go run bench/loadtest.go --concurrency 50 --total 1000 --url http://localhost:8080/v1/completions
+# One level: 50 concurrent clients, 1000 requests
+go run bench/loadtest.go -concurrency 50 -totalRequest 1000
+
+# Sweep concurrency levels, 20 requests per client at each level
+go run bench/loadtest.go -sweep 1,10,50,100,500 -requestsPerWorker 20
 ```
 
-Results are output as CSV for plotting.
+Each level appends a summary row to `bench/results/runs.csv`. While it runs, it polls `GET /stats` every `-statsInterval` (default 100ms) and writes the samples to `bench/results/stats.csv`, which gives queue depth and engine occupancy over time.
 
 ## How This Compares to Production Systems
 

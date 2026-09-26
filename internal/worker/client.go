@@ -1,7 +1,7 @@
 package worker
 
 import (
-	inferencepb "github.com/yashp5/inference-serving-infra/gen"
+	inferencepb "github.com/yashp5/inference-engine/gen"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
