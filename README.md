@@ -302,6 +302,8 @@ What makes systems like vLLM special. Standard batching waits for all requests i
 
 A real serving system runs multiple models and manages limited memory.
 
+Design and build plan: [docs/phase5-multi-model.md](docs/phase5-multi-model.md).
+
 **What to build:**
 - Model registry: knows available models (name, size, path on disk)
 - Endpoints to load and unload models (`POST /v1/models/load`, `DELETE /v1/models/{name}`)

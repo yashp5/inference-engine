@@ -1,0 +1,22 @@
+{
+  "models": [
+    {
+      "name": "tinyllama",
+      "path": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+      "memory_mb": 1024,
+      "continuous_batching": true,
+      "engine_slots": 8,
+      "per_seq_ctx": 512,
+      "preload": true
+    },
+    {
+      "name": "tinyllama-static",
+      "path": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+      "memory_mb": 900,
+      "continuous_batching": false,
+      "engine_slots": 0,
+      "per_seq_ctx": 0,
+      "preload": false
+    }
+  ]
+}
