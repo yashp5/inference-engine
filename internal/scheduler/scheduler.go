@@ -173,11 +173,13 @@ type Engine struct {
 }
 
 type inflight struct {
-	req       *types.InferRequest
-	text      strings.Builder
-	tokens    int
-	startedAt time.Time
-	done      chan struct{} // closed by take(); stops the watcher
+	req          *types.InferRequest
+	text         strings.Builder
+	tokens       int
+	startedAt    time.Time
+	admittedAt   time.Time // worker put it in a slot: queueing ends here
+	firstTokenAt time.Time
+	done         chan struct{} // closed by take(); stops the watcher
 }
 
 func NewEngine(client inferencepb.InferenceClient, admitCh chan *types.InferRequest, nSlots int) *Engine {
@@ -407,15 +409,25 @@ func (e *Engine) session(ctx context.Context) error {
 		}
 		switch p := ev.Payload.(type) {
 		case *inferencepb.EngineEvent_Admitted:
+			if f, ok := e.lookup(p.Admitted.RequestId); ok {
+				f.admittedAt = time.Now()
+			}
 			log.Printf("engine: admitted request_id=%s slot=%d",
 				p.Admitted.RequestId, p.Admitted.SlotId)
 		case *inferencepb.EngineEvent_Token:
 			if f, ok := e.lookup(p.Token.RequestId); ok {
+				if f.firstTokenAt.IsZero() {
+					f.firstTokenAt = time.Now()
+				}
 				f.text.WriteString(p.Token.Text)
 				f.tokens = int(p.Token.Index) + 1
 			}
 		case *inferencepb.EngineEvent_Finished:
 			if f, ok := e.take(p.Finished.RequestId); ok {
+				now := time.Now()
+				if f.firstTokenAt.IsZero() { // EOS on the very first sample
+					f.firstTokenAt = now
+				}
 				// A mismatch means Token events went missing on the wire.
 				if f.tokens != int(p.Finished.TokensGenerated) {
 					log.Printf("engine: token count mismatch request_id=%s received=%d reported=%d",
@@ -434,8 +446,9 @@ func (e *Engine) session(ctx context.Context) error {
 					RequestId:       p.Finished.RequestId,
 					GeneratedText:   f.text.String(),
 					TokensGenerated: int(p.Finished.TokensGenerated),
-					InferenceTimeMs: int(time.Since(f.startedAt).Milliseconds()),
-					QueueTimeMs:     int(f.startedAt.Sub(f.req.EnqueuedAt).Milliseconds()),
+					InferenceTimeMs: int(now.Sub(f.admittedAt).Milliseconds()),
+					QueueTimeMs:     int(f.admittedAt.Sub(f.req.EnqueuedAt).Milliseconds()),
+					TTFTMs:          int(f.firstTokenAt.Sub(f.req.ReceivedAt).Milliseconds()),
 				}})
 			}
 		case *inferencepb.EngineEvent_Rejected:

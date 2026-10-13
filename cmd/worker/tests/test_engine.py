@@ -1,11 +1,15 @@
 import codecs
+import json
+from re import A
 import warnings
 from collections.abc import Callable
+from google.protobuf.json_format import MessageToDict
 
 import pytest
-from engine import Engine
+from conftest import make_engine
+from engine import N_SLOTS, Engine
 
-from helpers import admit, cancel, drive, kind
+from helpers import Run, admit, cancel, drive, kind
 import inference_pb2
 
 MakeEngine = Callable[..., Engine]
@@ -14,15 +18,24 @@ PROMPTS = {
     "a": "The capital of France is",
     "b": "def fibonacci(n)",
     "c": "Once upon a time,",
+    # "d": "The quick brown fox",
+    # "e": "In machine learning, a neural network",
+    # "f": "import numpy as np\n",
+    # "g": "The three primary colors are",
+    # "h": "Dear Sir or Madam,",
+    # "i": "SELECT * FROM users WHERE",
+    # "j": "Water boils at a temperature of",
 }
 
 def test_single_request_completes(eng: Engine):
     run = drive(eng, [admit("r1", "The capital of France is", 8)])
     toks = run.tokens("r1")
     fin = run.finished("r1")
+    stats = run.stats()
 
-    print(toks)
-    print(fin)
+    print(json.dumps([MessageToDict(t) for t in toks], indent=2, ensure_ascii=False))
+    print(json.dumps(MessageToDict(fin) if fin is not None else None, indent=2, ensure_ascii=False))
+    print(json.dumps([MessageToDict(s) for s in stats], indent=2, ensure_ascii=False))
 
     assert fin is not None and fin.reason in (inference_pb2.FINISH_REASON_EOS, inference_pb2.FINISH_REASON_LENGTH)
     assert [t.index for t in toks] == list(range(len(toks)))
@@ -30,7 +43,6 @@ def test_single_request_completes(eng: Engine):
     if fin.reason == inference_pb2.FINISH_REASON_LENGTH:
         assert len(toks) == 8
     assert len(run.of("admitted")) == 1
-
 
 def test_batched_matches_solo(make_engine: MakeEngine):
     """The KV-isolation test. Greedy output must not depend on who else is in the batch.
@@ -92,7 +104,6 @@ def test_validation_rejects_without_disturbing_others(eng: Engine, msg, reason):
 
     assert len(run.rejected(rid)) == 1 and reason in run.rejected(rid)[0].reason
     assert run.finished("good") is not None
-
 
 def test_prompt_longer_than_n_batch(make_engine: MakeEngine):
     eng = make_engine(per_seq_ctx=256, n_batch=64)
@@ -159,3 +170,35 @@ def test_pieces_roundtrip_utf8(eng: Engine):
             return True
     # Otherwise this test isnt exercising the split-codepoint path at all
     assert any(invalid_alone(p) for p in pieces)
+
+def _event_pos(run: Run) -> dict[tuple[str, str], int]:
+    pos = {}
+    for i, ev in enumerate(run.events):
+        k = kind(ev)
+        if k == "admitted":
+            pos[("admitted", ev.admitted.request_id)] = i
+        elif k == "finished":
+            pos[("finished", ev.finished.request_id)] = i
+    return pos
+
+def test_policy_static(make_engine: MakeEngine):
+    eng = make_engine(n_slots=2, policy="static")
+    run = drive(eng, [admit("r1", "Hello", 3), admit("r2","My name", 10), admit("r3", "I am", 5)])
+    pos = _event_pos(run)
+
+    assert all(run.finished(r) for r in ("r1", "r2", "r3"))
+    assert max(s.active_slots for s in run.stats()) == 2          # the batch really filled
+    assert pos[("admitted", "r3")] > pos[("finished", "r1")]
+    assert pos[("admitted", "r3")] > pos[("finished", "r2")]
+    assert any(s.free_slots >= 1 and s.waiting >= 1 for s in run.stats())
+
+
+def test_policy_continuous(make_engine: MakeEngine):
+    eng = make_engine(n_slots=2, policy="continuous")
+    run = drive(eng, [admit("r1", "Hello", 2), admit("r2","My name", 10), admit("r3", "I am", 5)])
+    pos = _event_pos(run)
+
+    assert all(run.finished(r) for r in ("r1", "r2", "r3"))
+    assert max(s.active_slots for s in run.stats()) == 2
+    assert pos[("finished", "r1")] < pos[("admitted", "r3")] < pos[("finished", "r2")]
+    assert not any(s.free_slots >= 1 and s.waiting >= 1 and s.prefill_tokens == 0 for s in run.stats())

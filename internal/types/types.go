@@ -52,6 +52,7 @@ type CompletionsReponse struct {
 	InferenceTimeMs int    `json:"inference_time_ms"`
 	QueueTimeMs     int    `json:"queue_time_ms"`
 	TotalTimeMs     int    `json:"total_time_ms"`
+	TTFTMs          int    `json:"ttft_ms"`
 }
 
 type ErrorResponse struct {

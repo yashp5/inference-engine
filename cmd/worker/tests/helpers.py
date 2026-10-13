@@ -64,6 +64,9 @@ class Run:
     def rejected(self, rid: str) -> list[pb.Rejected]:
         return [r for r in self.of("rejected") if r.request_id == rid]
 
+    def stats(self) -> list[pb.StepStats]:
+        return [r for r in self.of("stats")]
+
 def assert_clean(eng: Engine) -> None:
     """No leaked slots, samplers, or queued works. A double _retire shows up as a duplicate in free"""
     assert sorted(eng.free) == list(range(eng.n_slots))
@@ -112,7 +115,6 @@ def drive(
             pending -= 1
         if pending == 0 or (close_after and close_after(ev)):
             close()
-
 
     assert_clean(eng)
     return run

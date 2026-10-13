@@ -8,3 +8,5 @@ wandb
 llama-cpp-python
 pytest
 pytest-timeout
+pandas
+matplotlib

@@ -7,6 +7,7 @@ If you want even lighter for iteration speed, GPT-2 via transformers works too b
 """
 
 import argparse
+from collections.abc import Iterator
 from concurrent import futures
 import logging
 import os
@@ -15,7 +16,7 @@ import signal
 import threading
 import time
 from types import FrameType
-from typing import Iterator, Optional, cast
+from typing import cast, override
 
 from grpc_reflection.v1alpha import reflection
 from engine import Engine as Eng
@@ -30,20 +31,14 @@ from llama_cpp.llama_types import (
 
 import grpc
 
-# ------ Logging ---------------------------------
-
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 log = logging.getLogger("worker")
 
-# --- Config (overrride via env vars) ------------------------
-
-
 PORT: str = os.getenv("WORKER_PORT", "50051")
 MAX_WORKERS: int = int(os.getenv("WORKER_MAX_THREADS", "4"))
 MODEL_PATH: str = os.getenv("MODEL_PATH", "/Users/yash/build/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-
 
 def _validate_request(
     request: inference_pb2.GenerateRequest, context: grpc.ServicerContext
@@ -56,30 +51,31 @@ def _validate_request(
     """
     if not request.request_id:
         context.abort(grpc.StatusCode.INVALID_ARGUMENT, "request_id is required")
-        return False
     if not request.prompt:
         context.abort(grpc.StatusCode.INVALID_ARGUMENT, "prompt is required")
-        return False
     if request.max_tokens <= 0:
         context.abort(grpc.StatusCode.INVALID_ARGUMENT, "max_tokens must be > 0")
-        return False
     if not (0.0 <= request.temperature <= 2.0):
         context.abort(grpc.StatusCode.INVALID_ARGUMENT, "temperature must be between 0.0 and 2.0")
-        return False
     return True
 
 class InferenceServicer(inference_pb2_grpc.InferenceServicer):
-    def __init__(self, model_path: str, llm_n_ctx: int, engine_slots: int, engine_per_seq_ctx: int) -> None:
+    def __init__(self, model_path: str, llm_n_ctx: int,
+        engine_slots: int, engine_per_seq_ctx: int, engine_policy: str = "continuous",
+        engine_static_fill_wait_s: float = 0.02, engine_ignore_eos: bool = False) -> None:
         super().__init__()
-        self._model_path = model_path
-        self._engine_slots = engine_slots
-        self._engine_per_seq_ctx = engine_per_seq_ctx
-        self._engine: Optional[Eng] = None
-        self._engine_init_lock = threading.Lock() # guards construction
-        self._engine_busy = threading.Lock() # held for a streams life
+        self._model_path: str = model_path
+        self._engine_slots: int = engine_slots
+        self._engine_per_seq_ctx: int = engine_per_seq_ctx
+        self._engine_policy: str = engine_policy
+        self._engine_static_fill_wait_s: float = engine_static_fill_wait_s
+        self._engine_ignore_eos: bool = engine_ignore_eos
+        self._engine: Eng | None = None
+        self._engine_init_lock = threading.Lock() # guards construction  # pyright: ignore[reportUnannotatedClassAttribute]
+        self._engine_busy = threading.Lock() # held for a streams life  # pyright: ignore[reportUnannotatedClassAttribute]
         # Llama is not thread safe and the gRPC pool runs RPCs concurrently, so
         # Generate/GenerateStream serialize on this for the whole generation
-        self._llm_lock = threading.Lock()
+        self._llm_lock = threading.Lock()  # pyright: ignore[reportUnannotatedClassAttribute]
         self.llm: Llama = Llama(
             model_path=model_path,
             n_ctx=llm_n_ctx,
@@ -92,12 +88,16 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
                 self._engine = Eng(
                     model_path=self._model_path,
                     n_slots=self._engine_slots,
-                    per_seq_ctx=self._engine_per_seq_ctx
+                    per_seq_ctx=self._engine_per_seq_ctx,
+                    policy=self._engine_policy,
+                    static_fill_wait_s=self._engine_static_fill_wait_s,
+                    ignore_eos=self._engine_ignore_eos,
                 )
             return self._engine
 
     # Unary RPC - waits for the full completion and returns response
-    def Generate(self, request: inference_pb2.GenerateRequest, context: grpc.ServicerContext):
+    @override
+    def Generate(self, request: inference_pb2.GenerateRequest, context: grpc.ServicerContext) -> inference_pb2.GenerateResponse:
         log.info("Generate called request_id=%s prompt_len=%d max_tokens=%d temperature=%.2f",
             request.request_id,
             len(request.prompt),
@@ -130,6 +130,7 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
         )
 
     # Server-Streaming RPC - yields one token at a time
+    @override
     def GenerateStream(self, request: inference_pb2.GenerateRequest, context: grpc.ServicerContext
         ) -> Iterator[inference_pb2.GenerateStreamResponse]:
         log.info("GenerateStream called request_id=%s prompt_len=%d max_tokens=%d temperature=%.2f",
@@ -142,9 +143,6 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
             return
 
         tokens_generated: int = 0
-        # Held across the yields: create_completion(stream=True) is lazy, so the
-        # model is in use until the last chunk. A client cancel closes this
-        # generator, and GeneratorExit unwinds the with and releases the lock.
         with self._llm_lock:
             stream = cast(
                 Iterator[CreateCompletionStreamResponse],
@@ -177,6 +175,7 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
             tokens_generated,
         )
 
+    @override
     def Engine(
             self, request_iterator: Iterator[inference_pb2.EngineRequest], context: grpc.ServicerContext
         ) -> Iterator[inference_pb2.EngineEvent]:
@@ -186,9 +185,8 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "an Engine stream is already active; this worker serves one"
                 )
-                return
 
-            inbox: "queue.Queue[Optional[inference_pb2.EngineRequest]]" = queue.Queue()
+            inbox: "queue.Queue[inference_pb2.EngineRequest | None]" = queue.Queue()
 
             def reader() -> None:
                 # Decoupled from the step loop: run() cannot block on request
@@ -224,28 +222,33 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
                     self._engine.close()
                     self._engine = None
 
-
 def serve() -> None:
     parser = argparse.ArgumentParser(description="Inference worker")
-    parser.add_argument("--model-path", default=MODEL_PATH, help="Path to GGUF model")
-    parser.add_argument("--port", default=PORT, help="Port to listen on")
-    parser.add_argument("--llm-n-ctx",type=int, default=512, help="context window for the unary/streaming Llama instance only")
-    parser.add_argument("--n-slots", type=int, default=MAX_WORKERS, help="Concurrent request slots")
-    parser.add_argument("--max-threads", type=int, default=MAX_WORKERS, help="gRPC thread pool size; must exceed the number of concurrent long-lived streams")
-    parser.add_argument("--engine-slots", type=int, default=8, help="continous-batching slots (KV sequences)")
-    parser.add_argument("--engine-per-seq-ctx", type=int, default=512, help="per-sequence context; engine n_ctx = slots * this")
+    _ = parser.add_argument("--model-path", default=MODEL_PATH, help="Path to GGUF model")
+    _ = parser.add_argument("--port", default=PORT, help="Port to listen on")
+    _ = parser.add_argument("--llm-n-ctx",type=int, default=512, help="context window for the unary/streaming Llama instance only")
+    _ = parser.add_argument("--n-slots", type=int, default=MAX_WORKERS, help="Concurrent request slots")
+    _ = parser.add_argument("--max-threads", type=int, default=MAX_WORKERS, help="gRPC thread pool size; must exceed the number of concurrent long-lived streams")
+    _ = parser.add_argument("--engine-slots", type=int, default=8, help="continous-batching slots (KV sequences)")
+    _ = parser.add_argument("--engine-per-seq-ctx", type=int, default=512, help="per-sequence context; engine n_ctx = slots * this")
+    _ = parser.add_argument("--engine-policy", choices=["continuous", "static"], default="continuous")
+    _ = parser.add_argument("--engine-static-fill-wait-ms", type=int, default=20)
+    _ = parser.add_argument("--bench-ignore-eos", action="store_true", help="benchmark only: always gneerate exactly max_tokens")
     args = parser.parse_args()
 
-    max_threads: int = max(args.max_threads, 2)
+    max_threads: int = max(args.max_threads, 2) # pyright: ignore[reportAny]
     server: grpc.Server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_threads))
 
     servicer = InferenceServicer(
-        model_path=args.model_path,
-        llm_n_ctx=args.llm_n_ctx,
-        engine_slots=args.engine_slots,
-        engine_per_seq_ctx=args.engine_per_seq_ctx,
+        model_path=args.model_path,  # pyright: ignore[reportAny]
+        llm_n_ctx=args.llm_n_ctx,  # pyright: ignore[reportAny]
+        engine_slots=args.engine_slots, # pyright: ignore[reportAny]
+        engine_per_seq_ctx=args.engine_per_seq_ctx, # pyright: ignore[reportAny]
+        engine_policy=args.engine_policy, # pyright: ignore[reportAny]
+        engine_static_fill_wait_s=args.engine_static_fill_wait_ms / 1000.0, # pyright: ignore[reportAny]
+        engine_ignore_eos=args.bench_ignore_eos  # pyright: ignore[reportAny]
     )
-    inference_pb2_grpc.add_InferenceServicer_to_server(servicer, server)
+    inference_pb2_grpc.add_InferenceServicer_to_server(servicer, server)  # pyright: ignore[reportUnknownMemberType]
 
     SERVICE_NAMES: tuple[str, ...] = (
         inference_pb2.DESCRIPTOR.services_by_name["Inference"].full_name,
@@ -253,23 +256,24 @@ def serve() -> None:
     )
     reflection.enable_server_reflection(SERVICE_NAMES, server)
 
-    server.add_insecure_port(f"[::]:{args.port}")
+    _ = server.add_insecure_port(f"[::]:{args.port}")  # pyright: ignore[reportAny]
     server.start()
-    log.info("worker listening on port %s (threads=%d engine_slots=%d per_seq_ctx=%d engine_n_ctx=%d)",
-                 args.port, max_threads, args.engine_slots, args.engine_per_seq_ctx,
-                 args.engine_slots * args.engine_per_seq_ctx)
+    log.info("worker listening on port %s (threads=%d engine_slots=%d per_seq_ctx=%d engine_n_ctx=%d policy=%s static_fill_wait_ms=%d ignore_eos=%s)",
+                    args.port, max_threads, args.engine_slots, args.engine_per_seq_ctx,  # pyright: ignore[reportAny]
+                    args.engine_slots * args.engine_per_seq_ctx,  # pyright: ignore[reportAny]
+                    args.engine_policy, args.engine_static_fill_wait_ms, args.bench_ignore_eos)  # pyright: ignore[reportAny]
 
     # --- Graceful shutdown on SIGINT / SIGTERM
-    def _shutdown(signum: int, frame: Optional[FrameType]) -> None:
+    def _shutdown(signum: int, frame: FrameType | None) -> None:  # pyright: ignore[reportUnusedParameter]
         log.info("Shutdown signal received, stopping server...")
-        server.stop(grace=5).wait()
+        _ = server.stop(grace=5).wait()
         servicer.close()
         log.info("Server stopped.")
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    _ = signal.signal(signal.SIGINT, _shutdown)
+    _ = signal.signal(signal.SIGTERM, _shutdown)
 
-    server.wait_for_termination()
+    _ = server.wait_for_termination()
 
 if __name__ == "__main__":
     serve()

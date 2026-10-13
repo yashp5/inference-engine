@@ -1,5 +1,6 @@
 import codecs
 from collections import deque
+from collections.abc import Iterator
 import ctypes
 from dataclasses import dataclass, field
 import logging
@@ -7,10 +8,10 @@ import os
 from queue import Queue
 import queue
 import threading
-from time import perf_counter
-from typing import Any, Deque, Iterator, List, Optional, Tuple
+from time import perf_counter, sleep
 import llama_cpp
 from llama_cpp._internals import LlamaModel, LlamaContext
+from llama_cpp.llama_cpp import llama_memory_t, llama_vocab_p
 import inference_pb2
 
 log = logging.getLogger("engine")
@@ -46,7 +47,7 @@ def _init_backend() -> None:
 class Pending:
     """Validated and tokenized, waiting for a free slot."""
     request_id: str
-    tokens: List[int]
+    tokens: list[int]
     max_tokens: int
     temperature: float
 
@@ -55,7 +56,7 @@ class Slot:
     id: int                         # seq_id
     active: bool = False
     request_id: str = ""
-    sampler: Any = None
+    sampler: llama_cpp.llama_sampler_p | None = None
     decoder: codecs.IncrementalDecoder = field(
         default_factory=lambda: codecs.getincrementaldecoder("utf-8")("replace")
     )
@@ -83,21 +84,31 @@ class Engine:
         n_slots: int = N_SLOTS,
         per_seq_ctx: int = PER_SEQ_CTX,
         n_batch: int = N_BATCH,
-        n_threads: Optional[int] = None,
-        n_threads_batch: Optional[int] = None,
+        n_threads: int | None = None,
+        n_threads_batch: int | None = None,
+        policy: str = "continuous",  # or "static"
+        static_fill_wait_s: float = 0.02,
+        ignore_eos: bool = False,
     ) -> None:
-        self.n_slots = n_slots
-        self.per_seq_ctx = per_seq_ctx
-        self.n_batch = n_batch
+        if policy not in ("continuous", "static"):
+            raise ValueError(f"unknown policy {policy!r}")
+        self.policy: str = policy
+        self.static_fill_wait_s: float = static_fill_wait_s
+        self.ignore_eos: bool = ignore_eos
+        self._batch_open: bool = False
+        self._fill_deadline: float|None = None
+        self.n_slots: int = n_slots
+        self.per_seq_ctx: int = per_seq_ctx
+        self.n_batch: int = n_batch
 
         _init_backend()
 
-        self.model = LlamaModel(
+        self.model: LlamaModel = LlamaModel(
             path_model=model_path,
             params=llama_cpp.llama_model_default_params(),
             verbose=False,
         )
-        self.vocab = self.model.vocab
+        self.vocab: llama_vocab_p = self.model.vocab
 
         cp = llama_cpp.llama_context_default_params()
         cp.n_ctx = n_slots * per_seq_ctx
@@ -108,25 +119,24 @@ class Engine:
             cp.n_threads = n_threads
         if n_threads_batch is not None:
             cp.n_threads_batch = n_threads_batch
-        self.ctx = LlamaContext(model=self.model, params=cp, verbose=False)
+        self.ctx: LlamaContext = LlamaContext(model=self.model, params=cp, verbose=False)
 
         mem = llama_cpp.llama_get_memory(self.ctx.ctx)
         if mem is None:
             raise RuntimeError("llama_get_memory returned NULL")
-        self.mem = mem
+        self.mem: llama_memory_t = mem
         # 3rd arg is seq_ids PER TOKEN, not the sequence count
-        self.batch = llama_cpp.llama_batch_init(n_batch, 0, 1)
+        self.batch: llama_cpp.llama_batch = llama_cpp.llama_batch_init(n_batch, 0, 1)
 
-        self.slots: List[Slot] = [Slot(id=i) for i in range(n_slots)]
-        self.free: Deque[int] = deque(range(n_slots))
-        self.waiting: Deque[Pending] = deque()
-        self.step = 0
-        self._closed = False
-        self._piece_buf = (ctypes.c_char * _PIECE_BUF)()
+        self.slots: list[Slot] = [Slot(id=i) for i in range(n_slots)]
+        self.free: deque[int] = deque(range(n_slots))
+        self.waiting: deque[Pending] = deque()
+        self.step: int = 0
+        self._closed: bool = False
+        self._piece_buf: ctypes.Array[ctypes.c_char] = (ctypes.c_char * _PIECE_BUF)()
 
         log.info(
-            "engine ready model=%s n_slots=%d per_seq_ctx=%d n_ctx=%d "
-            "n_ctx_train=%d n_batch=%d n_vocab=%d",
+            "engine ready model=%s n_slots=%d per_seq_ctx=%d n_ctx=%d n_ctx_train=%d n_batch=%d n_vocab=%d",
             self.model.desc(),
             n_slots,
             per_seq_ctx,
@@ -139,184 +149,10 @@ class Engine:
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: tuple[None, ...]):
         self.close()
 
-    def _push(self, token: int, seq_id: int, pos: int, logits: bool) -> int:
-        i = self.batch.n_tokens
-        if i >= self.n_batch:
-            raise RuntimeError(f"batch overflow: n_batch={self.n_batch}")
-
-        self.batch.token[i] = token
-        self.batch.pos[i] = pos # per-sequence position, drives rope
-        self.batch.n_seq_id[i] = 1
-        self.batch.seq_id[i][0] = seq_id # the only thing isolating requests
-        self.batch.logits[i] = 1 if logits else 0
-        self.batch.n_tokens = i+1
-
-        return i
-
-    def _new_sampler(
-        self, temperature: float, seed: int = llama_cpp.LLAMA_DEFAULT_SEED
-    ) -> llama_cpp.llama_sampler_p:
-        """Build a per-request sampler chain.
-
-        Order matters: the truncation samplers run first, temp rescales what
-        survives, and dist must be last because it is the one that actually
-        picks. The chain takes ownership of everything added to it, so
-        llama_sampler_free(chain) frees the members too - never free the parts.
-        """
-        chain = llama_cpp.llama_sampler_chain_init(
-            llama_cpp.llama_sampler_chain_default_params()
-        )
-        if chain is None:
-            raise RuntimeError("llama_sampler_chain_init returned NULL")
-        add = llama_cpp.llama_sampler_chain_add
-        if temperature <= 0.0:
-            add(chain, llama_cpp.llama_sampler_init_greedy())
-        else:
-            add(chain, llama_cpp.llama_sampler_init_top_k(_TOP_K))
-            add(chain, llama_cpp.llama_sampler_init_top_p(_TOP_P, 1))
-            add(chain, llama_cpp.llama_sampler_init_temp(temperature))
-            add(chain, llama_cpp.llama_sampler_init_dist(seed))
-        return chain
-
-    def _occupy(self, p: Pending) -> Slot:
-        slot = self.slots[self.free.popleft()]
-        slot.active = True
-        slot.request_id = p.request_id
-        slot.max_tokens = p.max_tokens
-        slot.generated = 0
-        slot.n_past = 0
-        slot.last_token = -1
-        slot.sampler = self._new_sampler(p.temperature)
-        slot.decoder.reset()
-        return slot
-
-    def _retire(self, slot: Slot) -> None:
-        llama_cpp.llama_memory_seq_rm(self.mem, slot.id, -1, -1)
-        if slot.sampler is not None:
-            llama_cpp.llama_sampler_free(slot.sampler)
-        slot.active = False
-        slot.request_id = ""
-        slot.sampler = None
-        slot.decoder.reset()   # drop any partial multi-byte sequence
-        slot.n_past = 0
-        slot.max_tokens = 0
-        slot.generated = 0
-        slot.last_token = -1
-        self.free.append(slot.id)
-
-    def _active(self) -> List[Slot]:
-        return [s for s in self.slots if s.active]
-
-    def _accept(self, admit: inference_pb2.Admit) -> Optional[inference_pb2.EngineEvent]:
-        rid = admit.request_id
-        if not rid:
-            log.warning("dropping Admit with empty request_id")
-            return None
-        if self._known(rid):
-            return self._ev_rejected(rid, "duplicate request_id")
-        if not admit.prompt:
-            return self._ev_rejected(rid, "prompt is required")
-        if admit.max_tokens <= 0:
-            return self._ev_rejected(rid, "max_tokens must be > 0")
-        if not (0.0 <= admit.temperature <= 2.0):
-            return self._ev_rejected(rid, "temperature must be between 0.0 and 2.0")
-
-        tokens = self.tokenize(admit.prompt)
-
-        # Enforcing the budget per sequence is what keeps the unified areana from
-        # being oversubscribed, given n_ctx = n_slots * per_seq_ctx
-        if len(tokens) + admit.max_tokens > self.per_seq_ctx:
-            return self._ev_rejected(
-                rid,
-                f"prompt {len(tokens)} + max_tokens {admit.max_tokens} exceeds "
-                f"per-sequence context {self.per_seq_ctx}"
-            )
-        # Waiting can never help: a prompt is perfilled in a single decode
-        if len(tokens) > self.n_batch:
-            return self._ev_rejected(
-                rid, f"prompt {len(tokens)} exceeds n_batch {self.n_batch}"
-            )
-
-        self.waiting.append(Pending(rid, tokens, admit.max_tokens, admit.temperature))
-        return None
-
-    def _cancel(self, rid: str) -> List[inference_pb2.EngineEvent]:
-        for p in self.waiting:
-            if p.request_id == rid:
-                self.waiting.remove(p)
-                return [self._ev_rejected(rid, "cancelled before admission")]
-
-        for slot in self._active():
-            if slot.request_id == rid:
-                ev = self._ev_finished(slot, REASON_CANCELLED)
-                self._retire(slot)
-                return [ev]
-
-        return [] # already finished, or never seen
-
-    def _known(self, rid: str) -> bool:
-        return any(p.request_id == rid for p in self.waiting) or any(
-            s.active and s.request_id == rid for s in self.slots
-        )
-
-    def _ev_rejected(self, rid: str, reason: str) -> inference_pb2.EngineEvent:
-        log.info("rejected request_id=%s reason=%s", rid, reason)
-        return inference_pb2.EngineEvent(
-            rejected=inference_pb2.Rejected(request_id=rid, reason=reason)
-        )
-
-    def _ev_finished(self, slot: Slot, reason: "inference_pb2.FinishReason") -> inference_pb2.EngineEvent:
-        return inference_pb2.EngineEvent(
-           finished=inference_pb2.Finished(
-               request_id=slot.request_id,
-               slot_id=slot.id,
-               reason=reason,
-               tokens_generated=slot.generated
-           )
-        )
-
-    def _ev_stats(self, step_us, prefill_tokens, batch_tokens):
-        return inference_pb2.EngineEvent(
-            stats=inference_pb2.StepStats(
-                step=self.step,
-                active_slots=len(self._active()),
-                free_slots=len(self.free),
-                waiting=len(self.waiting),
-                batch_tokens=batch_tokens,
-                prefill_tokens=prefill_tokens,
-                step_time_us=step_us,
-                kv_used=sum(s.n_past for s in self._active())
-            )
-        )
-
-    def _drain(self, inbox: "Queue[Optional[inference_pb2.EngineRequest]]", block: bool) -> Tuple[bool, List[inference_pb2.EngineEvent]]:
-        events: List[inference_pb2.EngineEvent] = []
-        half_closed = False
-        blocking = block
-        while True:
-            try:
-                item = inbox.get() if blocking else inbox.get_nowait()
-            except queue.Empty:
-                break
-            blocking = False
-            if item is None:         # reader thread saw end of stream
-                half_closed = True
-                continue
-            kind = item.WhichOneof("payload")
-            if kind == "admit":
-                ev = self._accept(item.admit)
-                if ev is not None:
-                    events.append(ev)
-            elif kind == "cancel":
-                events.extend(self._cancel(item.cancel.request_id))
-            else:
-                log.warning("EngineRequest with no payload")
-        return half_closed, events
-
-    def run(self, inbox: "Queue[Optional[inference_pb2.EngineRequest]]") -> Iterator[inference_pb2.EngineEvent]:
+    def run(self, inbox: "Queue[inference_pb2.EngineRequest | None]") -> Iterator[inference_pb2.EngineEvent]:
         closed = False
         backoff = False
 
@@ -343,18 +179,31 @@ class Engine:
                     return
                 continue
 
+            # static: a batch forms only once the previous one has fully drained
+            if self.policy == "static" and not active and not closed:
+                if not self._batch_open:
+                    self._batch_open = True
+                    self._fill_deadline = perf_counter() + self.static_fill_wait_s
+                # the go batcher's maxBatchWait, moved here. Without it the batch
+                # opens on the first arrival and runs 256 steps at width 1
+                assert self._fill_deadline is not None
+                if len(self.waiting) < len(self.free) and perf_counter() < self._fill_deadline:
+                    sleep(0.0005)
+                    continue
+            admit_ok = self.policy == "continuous" or self._batch_open
+
             self.step += 1
             self.batch.n_tokens = 0
-            planned: List[Tuple[Slot, int]] = []
-            sample_at: List[Tuple[Slot, int]] = []
+            planned: list[tuple[Slot, int]] = []
+            sample_at: list[tuple[Slot, int]] = []
             prefill_tokens = 0
-            admitted: Optional[Tuple[Slot, Pending]] = None
+            admitted: tuple[Slot, Pending] | None = None
 
             # phase 1: admit at most one
             # One per step on purpose: a long prefill dominates the batch and
             # every decoding slot waits for the slowest row, so batching several
             # admissions is an inter-token latency spike for requests already running
-            if not closed and not backoff and self.free and self.waiting:
+            if not closed and not backoff and admit_ok and self.free and self.waiting:
                 head = self.waiting[0]
                 # Defer, dont reject: it will fit once the batch shrinks
                 if len(active) + len(head.tokens) <= self.n_batch:
@@ -368,6 +217,9 @@ class Engine:
                             sample_at.append((new_slot, idx))
                     planned.append((new_slot, len(pending.tokens)))
                     prefill_tokens = len(pending.tokens)
+
+            if self.policy == "static" and self._batch_open and (not self.free or not self.waiting):
+                self._batch_open = False # sealed: nobody joins until every slot drains
 
             # phase 2: one decode row per already-active slot
             for slot in active:
@@ -427,10 +279,12 @@ class Engine:
             for slot, idx in sample_at:
                 # Raw batch index: llama_get_logits_ith maps it through the
                 # output table internally.
+                if slot.sampler is None:
+                    raise RuntimeError("slot.sampler is None")
                 tok = llama_cpp.llama_sampler_sample(slot.sampler, self.ctx.ctx, idx)
                 llama_cpp.llama_sampler_accept(slot.sampler, tok)
 
-                if llama_cpp.llama_vocab_is_eog(self.vocab, tok):
+                if not self.ignore_eos and llama_cpp.llama_vocab_is_eog(self.vocab, tok):
                     yield self._ev_finished(slot, REASON_EOS)
                     self._retire(slot)
                     continue
@@ -454,7 +308,180 @@ class Engine:
             # phase 6: stats
             yield self._ev_stats(step_us, prefill_tokens, batch_tokens)
 
-    def tokenize(self, prompt: str, add_bos: bool = True, special: bool = False) -> List[int]:
+    def _drain(self, inbox: "Queue[inference_pb2.EngineRequest | None]", block: bool) -> tuple[bool, list[inference_pb2.EngineEvent]]:
+        events: list[inference_pb2.EngineEvent] = []
+        half_closed = False
+        blocking = block
+        while True:
+            try:
+                item = inbox.get() if blocking else inbox.get_nowait()
+            except queue.Empty:
+                break
+            blocking = False
+            if item is None:         # reader thread saw end of stream
+                half_closed = True
+                continue
+            kind = item.WhichOneof("payload")  # pyright: ignore[reportAny]
+            if kind == "admit":
+                ev = self._accept(item.admit)
+                if ev is not None:
+                    events.append(ev)
+            elif kind == "cancel":
+                events.extend(self._cancel(item.cancel.request_id))
+            else:
+                log.warning("EngineRequest with no payload")
+        return half_closed, events
+
+    def _push(self, token: int, seq_id: int, pos: int, logits: bool) -> int:
+        i = self.batch.n_tokens
+        if i >= self.n_batch:
+            raise RuntimeError(f"batch overflow: n_batch={self.n_batch}")
+
+        self.batch.token[i] = token
+        self.batch.pos[i] = pos # per-sequence position, drives rope
+        self.batch.n_seq_id[i] = 1
+        self.batch.seq_id[i][0] = seq_id # the only thing isolating requests
+        self.batch.logits[i] = 1 if logits else 0
+        self.batch.n_tokens = i+1
+
+        return i
+
+    def _occupy(self, p: Pending) -> Slot:
+        slot = self.slots[self.free.popleft()]
+        slot.active = True
+        slot.request_id = p.request_id
+        slot.max_tokens = p.max_tokens
+        slot.generated = 0
+        slot.n_past = 0
+        slot.last_token = -1
+        slot.sampler = self._new_sampler(p.temperature)
+        slot.decoder.reset()
+        return slot
+
+    def _retire(self, slot: Slot) -> None:
+        _ = llama_cpp.llama_memory_seq_rm(self.mem, slot.id, -1, -1)
+        if slot.sampler is not None:
+            llama_cpp.llama_sampler_free(slot.sampler)
+        slot.active = False
+        slot.request_id = ""
+        slot.sampler = None
+        slot.decoder.reset()   # drop any partial multi-byte sequence
+        slot.n_past = 0
+        slot.max_tokens = 0
+        slot.generated = 0
+        slot.last_token = -1
+        self.free.append(slot.id)
+
+    def _active(self) -> list[Slot]:
+        return [s for s in self.slots if s.active]
+
+    def _accept(self, admit: inference_pb2.Admit) -> inference_pb2.EngineEvent | None:
+        rid = admit.request_id
+        if not rid:
+            log.warning("dropping Admit with empty request_id")
+            return None
+        if self._known(rid):
+            return self._ev_rejected(rid, "duplicate request_id")
+        if not admit.prompt:
+            return self._ev_rejected(rid, "prompt is required")
+        if admit.max_tokens <= 0:
+            return self._ev_rejected(rid, "max_tokens must be > 0")
+        if not (0.0 <= admit.temperature <= 2.0):
+            return self._ev_rejected(rid, "temperature must be between 0.0 and 2.0")
+
+        tokens = self.tokenize(admit.prompt)
+
+        # Enforcing the budget per sequence is what keeps the unified areana from
+        # being oversubscribed, given n_ctx = n_slots * per_seq_ctx
+        if len(tokens) + admit.max_tokens > self.per_seq_ctx:
+            return self._ev_rejected(
+                rid,
+                f"prompt {len(tokens)} + max_tokens {admit.max_tokens} exceeds per-sequence context {self.per_seq_ctx}"
+            )
+        # Waiting can never help: a prompt is perfilled in a single decode
+        if len(tokens) > self.n_batch:
+            return self._ev_rejected(
+                rid, f"prompt {len(tokens)} exceeds n_batch {self.n_batch}"
+            )
+
+        self.waiting.append(Pending(rid, tokens, admit.max_tokens, admit.temperature))
+        return None
+
+    def _cancel(self, rid: str) -> list[inference_pb2.EngineEvent]:
+        for p in self.waiting:
+            if p.request_id == rid:
+                self.waiting.remove(p)
+                return [self._ev_rejected(rid, "cancelled before admission")]
+
+        for slot in self._active():
+            if slot.request_id == rid:
+                ev = self._ev_finished(slot, REASON_CANCELLED)
+                self._retire(slot)
+                return [ev]
+
+        return [] # already finished, or never seen
+
+    def _known(self, rid: str) -> bool:
+        return any(p.request_id == rid for p in self.waiting) or any(
+            s.active and s.request_id == rid for s in self.slots
+        )
+
+    def _ev_rejected(self, rid: str, reason: str) -> inference_pb2.EngineEvent:
+        log.info("rejected request_id=%s reason=%s", rid, reason)
+        return inference_pb2.EngineEvent(
+            rejected=inference_pb2.Rejected(request_id=rid, reason=reason)
+        )
+
+    def _ev_finished(self, slot: Slot, reason: "inference_pb2.FinishReason") -> inference_pb2.EngineEvent:
+        return inference_pb2.EngineEvent(
+           finished=inference_pb2.Finished(
+               request_id=slot.request_id,
+               slot_id=slot.id,
+               reason=reason,
+               tokens_generated=slot.generated
+           )
+        )
+
+    def _ev_stats(self, step_us: int, prefill_tokens: int, batch_tokens: int) -> inference_pb2.EngineEvent:
+        return inference_pb2.EngineEvent(
+            stats=inference_pb2.StepStats(
+                step=self.step,
+                active_slots=len(self._active()),
+                free_slots=len(self.free),
+                waiting=len(self.waiting),
+                batch_tokens=batch_tokens,
+                prefill_tokens=prefill_tokens,
+                step_time_us=step_us,
+                kv_used=sum(s.n_past for s in self._active())
+            )
+        )
+
+    def _new_sampler(
+        self, temperature: float, seed: int = llama_cpp.LLAMA_DEFAULT_SEED
+    ) -> llama_cpp.llama_sampler_p:
+        """Build a per-request sampler chain.
+
+        Order matters: the truncation samplers run first, temp rescales what
+        survives, and dist must be last because it is the one that actually
+        picks. The chain takes ownership of everything added to it, so
+        llama_sampler_free(chain) frees the members too - never free the parts.
+        """
+        chain = llama_cpp.llama_sampler_chain_init(
+            llama_cpp.llama_sampler_chain_default_params()
+        )
+        if chain is None:  # pyright: ignore[reportUnnecessaryComparison]
+            raise RuntimeError("llama_sampler_chain_init returned NULL")
+        add = llama_cpp.llama_sampler_chain_add
+        if temperature <= 0.0:
+            add(chain, llama_cpp.llama_sampler_init_greedy())
+        else:
+            add(chain, llama_cpp.llama_sampler_init_top_k(_TOP_K))
+            add(chain, llama_cpp.llama_sampler_init_top_p(_TOP_P, 1))
+            add(chain, llama_cpp.llama_sampler_init_temp(temperature))
+            add(chain, llama_cpp.llama_sampler_init_dist(seed))
+        return chain
+
+    def tokenize(self, prompt: str, add_bos: bool = True, special: bool = False) -> list[int]:
         return self.model.tokenize(prompt.encode("utf-8"), add_bos, special)
 
     def piece(self, token: int):
@@ -477,6 +504,8 @@ class Engine:
         for slot in self._active():
             self._retire(slot)
         self.waiting.clear()
+        self._batch_open = False
+        self._fill_deadline = None
 
     def close(self) -> None:
         if self._closed:

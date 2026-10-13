@@ -30,12 +30,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 @pytest.fixture(scope="session")
 def make_engine() -> Iterator[MakeEngine]:
-    cache: dict[tuple[int, int, int], Engine] = {}
+    cache: dict[tuple[int, int, int, str], Engine] = {}
 
-    def make(n_slots: int = 2, per_seq_ctx: int = 256, n_batch: int = 256) -> Engine:
-        key = (n_slots, per_seq_ctx, n_batch)
+    def make(n_slots: int = 2, per_seq_ctx: int = 256, n_batch: int = 256, policy: str = "continuous") -> Engine:
+        key = (n_slots, per_seq_ctx, n_batch, policy)
         if key not in cache:
-            cache[key] = Engine(n_slots=n_slots, per_seq_ctx=per_seq_ctx, n_batch=n_batch)
+            cache[key] = Engine(n_slots=n_slots, per_seq_ctx=per_seq_ctx, n_batch=n_batch, policy=policy)
         eng = cache[key]
         eng.reset()
         return eng

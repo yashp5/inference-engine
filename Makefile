@@ -75,6 +75,13 @@ run:
 run-worker:
 	$(PYTHON) cmd/worker/worker.py
 
+BENCH_MIX   ?= 16:0.8,256:0.2
+BENCH_SWEEP ?= 8,16,32
+BENCH_RPW   ?= 20
+.PHONY: bench
+bench:
+	go run ./bench -label $(LABEL) -maxTokensDist $(BENCH_MIX) -sweep $(BENCH_SWEEP) \
+		-requestsPerWorker $(BENCH_RPW) -timeout 300s
 
 # --- test ------------------------------------------------------------------------
 .PHONY: test-engine test-worker test-e2e test
