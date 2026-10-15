@@ -91,7 +91,6 @@ runs/
 *.h5
 
 # Other data files
-*.csv
 *.tsv
 
 # Custom debug files
