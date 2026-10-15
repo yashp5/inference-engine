@@ -37,6 +37,142 @@ The server runs in one of two modes, chosen at startup:
 - **Static batching** (default): the Batcher groups requests by size or time, and the Scheduler hands each batch to a worker pool that makes one `GenerateStream` call per request.
 - **Continuous batching** (`-continuousBatching`): the Engine keeps a single bidirectional `Engine` stream open to the worker and admits or cancels requests on it. The worker assigns requests to slots and decodes every active slot in one forward pass per step.
 
+## Benchmarks
+
+Continuous batching vs. static batching, measured inside the same engine on the same hardware, model and seeded workload. Only the admission policy differs.
+
+**Headline:** on a mixed-length workload at concurrency 8 (one client per engine slot), continuous batching delivers **1.46× the throughput** and a **34× lower median time to first token**:
+
+| Mixed workload, concurrency 8 | Static | Continuous | Change |
+| :--- | ---: | ---: | :--- |
+| Output throughput | 115 tok/s | **168 tok/s** | 1.46× |
+| Time to first token, p50 | 2,449 ms | **71 ms** | 34× lower |
+| Time to first token, p99 | 5,032 ms | **1,149 ms** | 4.4× lower |
+| End-to-end latency, p50 | 3,144 ms | **756 ms** | 4.2× lower |
+| End-to-end latency, p99 | 10,502 ms | 11,439 ms | 9% higher |
+| Engine slot utilization | 35% | **90%** | |
+
+It isn't a free win. Continuous batching makes the **longest** requests slower, and on a workload where every request has the **same length**, static batching has the higher throughput. Both results are below.
+
+### Test setup
+
+- **Hardware and model:** _to be filled in_
+- **Engine:** 8 slots, 512-token context per sequence, served through the continuous-batching `Engine` stream (`-continuousBatching`). The policy is selected with the worker's `--engine-policy`:
+  - **`continuous`** refills a freed slot on the next decode step.
+  - **`static`** forms a batch only after every slot has drained. It waits up to 20 ms (`--engine-static-fill-wait-ms`) for the batch to fill, then seals it until all of its requests finish.
+  - Both admit at most one request per step, so the comparison isolates *when* requests may join.
+  - This `static` is an engine policy, not the Go server's static mode from Phase 3 (where requests reach the model one at a time).
+- **Workloads:** every request generates exactly `max_tokens` tokens (`--bench-ignore-eos`), so request lengths are controlled. Both workloads have an expected mean of 64 output tokens.
+  - **Mixed:** 80% of requests ask for 16 tokens, 20% for 256.
+  - **Uniform:** every request asks for 64 tokens.
+  - The length sequence is seeded (`-seed 1`), so both policies see identical requests. All requests use the prompt `"Once upon a time"` at temperature 0.7.
+- **Load:** closed loop. *C* clients each send 20 requests back to back, at *C* = 8, 16 and 32 (160, 320 and 640 requests per run). All 4,480 requests returned 200.
+- **Metrics:**
+  - **TTFT** is measured server-side, from request receipt to the first generated token (`ttft_ms`). End-to-end latency is measured by the client.
+  - **Throughput** is output tokens divided by wall-clock time.
+  - **Slot utilization** is the mean of `active_slots / 8`, sampled from `GET /stats` every 100 ms.
+
+With 8 slots, concurrency 16 and 32 overload the engine, so most of their latency is queueing (median queue time ≈ median TTFT). Concurrency 8 is the cleanest head-to-head comparison.
+
+### Mixed workload: where continuous batching wins
+
+![Sweep, mixed workload](bench/results/sweep_mixed.png)
+
+Continuous batching has higher throughput at every concurrency (1.46×, 1.21× and 1.49× at 8, 16 and 32). At concurrency 32, it cuts static batching's p99 TTFT from 53.9 s to 19.5 s.
+
+![Active slots over time, mixed workload](bench/results/timeline_mixed.png)
+
+The timeline shows why. Under static batching, a sealed batch stays open until its slowest request finishes. Once the 16-token requests are done, one or two 256-token requests run alone for several seconds while the other slots sit empty and up to seven requests wait outside. This is the convoy effect: static batching averages **35% slot utilization**. Continuous batching refills each slot as it frees up and stays at 7–8 active slots (90%), finishing the same 160 requests in 44 s instead of 64 s.
+
+![TTFT distribution, mixed workload](bench/results/ttft_cdf_mixed.png)
+
+Static batching's TTFT is a staircase: each step is a batch boundary that a request had to wait out, regardless of its own length. Under continuous batching, 95% of requests see their first token within 150 ms.
+
+**The trade-off: long requests get slower.** Median end-to-end latency by request length, at concurrency 8:
+
+| Policy | 16-token requests | 256-token requests |
+| :--- | ---: | ---: |
+| Static | 3,126 ms | 5,675 ms |
+| Continuous | **740 ms** | 11,240 ms |
+
+Under static batching, a long request spends most of its life decoding alone in a small batch, and small-batch steps are fast (about 17 ms per step on average for this run). Under continuous batching it always shares a full batch (about 41 ms per step), so its 256 tokens take twice as long. Continuous batching trades the longest requests' latency for throughput and short-request latency. Production schedulers manage this trade-off with priorities or fairness policies.
+
+### Uniform workload: where static batching holds its own
+
+![Sweep, uniform workload](bench/results/sweep_uniform.png)
+
+When every request has the same length, there's no convoy for continuous batching to break up. Static batching has higher throughput at every concurrency: 175 vs. 141 tok/s at 8 (1.24×), 182 vs. 143 at 16, and 153 vs. 143 at 32. Continuous batching still has the lower TTFT at concurrency 8 (p50 148 ms vs. 264 ms, with no batch boundary or fill wait to sit through), but its median end-to-end latency is higher (3,680 ms vs. 2,824 ms).
+
+The cause is per-step cost, not scheduling. Both policies keep the engine full (96% vs. 90% slot utilization, 7.9 vs. 7.2 tokens per step), but each continuous step takes about 55 ms against about 41 ms for static.
+
+Prefill doesn't explain it: the prompt is four words. **This is an open question.** The leading hypothesis is KV-cache layout. Under static batching every sequence ends together, so the cache empties between batches. Under continuous batching, sequences start and end at different times and the cache never empties, which may enlarge the KV range llama.cpp attends over on each step. The next step is to record per-step decode time (`step_time_us`, already exposed by `/stats`) in the benchmark poller.
+
+<details>
+<summary>Uniform workload: timeline and TTFT distribution</summary>
+
+![Active slots over time, uniform workload](bench/results/timeline_uniform.png)
+
+![TTFT distribution, uniform workload](bench/results/ttft_cdf_uniform.png)
+
+</details>
+
+### All runs
+
+| Workload | Concurrency | Policy | Throughput (tok/s) | TTFT p50 | TTFT p99 | E2E p50 | E2E p99 |
+| :--- | ---: | :--- | ---: | ---: | ---: | ---: | ---: |
+| Mixed | 8 | Static | 115 | 2.4 s | 5.0 s | 3.1 s | **10.5 s** |
+| Mixed | 8 | Continuous | **168** | **0.07 s** | **1.1 s** | **0.8 s** | 11.4 s |
+| Mixed | 16 | Static | 117 | 5.5 s | 17.7 s | 7.0 s | **20.1 s** |
+| Mixed | 16 | Continuous | **141** | **1.4 s** | **12.5 s** | **2.6 s** | 26.5 s |
+| Mixed | 32 | Static | 94 | 17.5 s | 53.9 s | 19.4 s | 55.4 s |
+| Mixed | 32 | Continuous | **140** | **11.7 s** | **19.5 s** | **13.8 s** | **33.3 s** |
+| Uniform | 8 | Static | **175** | 0.26 s | 1.3 s | **2.8 s** | **4.0 s** |
+| Uniform | 8 | Continuous | 141 | **0.15 s** | **0.5 s** | 3.7 s | 4.2 s |
+| Uniform | 16 | Static | **182** | 2.9 s | **8.7 s** | **5.5 s** | **11.2 s** |
+| Uniform | 16 | Continuous | 143 | **2.8 s** | 10.6 s | 6.3 s | 14.1 s |
+| Uniform | 32 | Static | **153** | **11.0 s** | 16.1 s | **14.0 s** | 19.6 s |
+| Uniform | 32 | Continuous | 143 | 12.0 s | **14.8 s** | 15.5 s | **18.3 s** |
+
+Bold marks the better policy in each pair. Raw data is in `bench/results/`: `runs.csv` (one row per run), `requests.csv` (one row per request) and `stats.csv` (`/stats` samples).
+
+### Reproducing
+
+```bash
+# 1. Worker: pick the policy. --bench-ignore-eos makes every request generate exactly max_tokens.
+cmd/worker/venv/bin/python cmd/worker/worker.py --model-path "$MODEL_PATH" \
+  --engine-slots 8 --engine-policy continuous --bench-ignore-eos
+
+# 2. Server: continuous-batching mode. Raise the timeouts, or requests queued at
+#    concurrency 16 and 32 hit the 5 s default queue timeout and return 504.
+go run ./cmd/server -continuousBatching -engineSlots 8 -queueTimeout 300s -requestTimeout 300s
+
+# 3. Load: the Makefile defaults are the mixed workload (16:0.8,256:0.2) at concurrency 8, 16 and 32,
+#    20 requests per client.
+make bench LABEL=continuous
+make bench LABEL=continuous-uniform BENCH_MIX=64:1
+
+# 4. Restart the worker with --engine-policy static, then:
+make bench LABEL=static
+make bench LABEL=static-uniform BENCH_MIX=64:1
+
+# 5. Summary tables and graphs (needs pandas and matplotlib from requirements.txt)
+cmd/worker/venv/bin/python bench/analyze.py
+```
+
+The load tester appends to the CSVs, so delete `bench/results/*.csv` before a fresh set of runs. `analyze.py` pairs runs by these four labels.
+
+The load tester also works on its own, against either server mode:
+
+```bash
+# One level: 50 concurrent clients, 1000 requests
+go run ./bench -concurrency 50 -totalRequest 1000
+
+# Sweep concurrency levels with a length mix, 20 requests per client at each level
+go run ./bench -sweep 1,10,50,100,500 -requestsPerWorker 20 -maxTokensDist 16:0.8,256:0.2 -label mytest
+```
+
+For each concurrency level it reports p50/p95/p99 latency, TTFT, goodput, and counts of 429s, timeouts and 5xx errors. It appends one summary row to `bench/results/runs.csv` and one row per request to `bench/results/requests.csv`. It also polls `GET /stats` every `-statsInterval` (default 100 ms) into `bench/results/stats.csv`, which records queue depth and engine occupancy over time.
+
 ## Project Structure
 
 ```
@@ -73,7 +209,9 @@ inference-engine/
 │   └── inference.proto             # gRPC service definition
 ├── gen/                            # Generated protobuf code (Go)
 ├── bench/
-│   └── loadtest.go                 # Load testing tool
+│   ├── loadtest.go, helpers.go     # Load tester (go run ./bench)
+│   ├── analyze.py                  # Summary tables and graphs
+│   └── results/                    # Benchmark CSVs and graphs
 ├── test/
 │   └── e2e/
 │       └── e2e_test.go             # End-to-end tests against a real server and worker
@@ -103,7 +241,8 @@ git clone https://github.com/yashp5/inference-engine.git
 cd inference-engine
 
 # Python environment. The Makefile test targets and the e2e test expect it at cmd/worker/venv.
-# (requirements.txt also installs torch and wandb for transformer/; the worker itself
+# (requirements.txt also installs torch and wandb for transformer/, and pandas and matplotlib
+# for bench/analyze.py; the worker itself
 # needs grpcio, grpcio-tools, grpcio-reflection, protobuf and llama-cpp-python.)
 python3 -m venv cmd/worker/venv
 cmd/worker/venv/bin/pip install -r requirements.txt
@@ -183,6 +322,9 @@ Python worker flags (`cmd/worker/worker.py`):
 | `--engine-per-seq-ctx` | `512` | Context per sequence; engine `n_ctx` = slots × this |
 | `--llm-n-ctx` | `512` | Context for the `Llama` instance used in static mode |
 | `--max-threads` | `4` (`$WORKER_MAX_THREADS`) | gRPC thread pool; must exceed the number of concurrent long-lived streams |
+| `--engine-policy` | `continuous` | Engine admission policy: `continuous`, or `static` (benchmark baseline) |
+| `--engine-static-fill-wait-ms` | `20` | Static policy: how long a new batch waits to fill before it's sealed |
+| `--bench-ignore-eos` | off | Benchmarks only: always generate exactly `max_tokens` |
 
 ## Build Phases
 
@@ -199,7 +341,7 @@ The project is built incrementally. Each phase adds a layer of complexity that a
 | 7. Horizontal scaling and load balancing | Not started |
 | 8. KV cache management | Not started |
 
-The load tester supports the benchmarks each phase describes, but no results are committed yet (`*.csv` is gitignored).
+Phase 4's results are in [Benchmarks](#benchmarks). The benchmarks planned for the other phases haven't been run yet.
 
 ### Phase 1 — Single Model, Single Request Server
 
@@ -284,15 +426,14 @@ What makes systems like vLLM special. Standard batching waits for all requests i
 - Slots freed by EOS, `max_tokens` or a cancel are refilled from the waiting queue on the next step. The batch stays as full as possible at all times
 - Admission guards: a prompt plus `max_tokens` that can't fit one sequence's context is rejected, and a prefill that doesn't fit the current batch waits. If the KV cache runs out of room, the new admission is rolled back; with no admission to roll back, the sequence using the most context is evicted with an error
 - Go client (`scheduler.Engine`): a slot semaphore sized to `-engineSlots`, a single sender goroutine that sends cancels before admits (gRPC `Send` isn't safe for concurrent use), and reconnects with exponential backoff. When the stream drops, every in-flight request is failed so no slot leaks
-- The latest `StepStats` are served at `GET /stats`
+- The latest `StepStats` are served at `GET /stats`, and responses report time to first token (`ttft_ms`)
+- A static admission policy in the same engine (`--engine-policy static`) as a controlled baseline for benchmarks
 - Enabled with `-continuousBatching`; `-engineSlots` must match the worker's `--engine-slots`
 - Tests: engine tests, worker gRPC tests, and a Go e2e suite covering concurrency above the slot count, client disconnects, rejections, and a worker crash with reconnect
 
 **Why it matters:** In LLM inference, different requests generate different numbers of tokens. With static batching, a request wanting 10 tokens holds its slot until the request wanting 500 tokens finishes. Continuous batching recovers those wasted cycles.
 
-**Benchmarking plan:**
-- Compare GPU utilization and throughput against static batching (Phase 3)
-- Show improvement when generation lengths vary widely across requests
+**Results:** on mixed-length requests, 1.46× the throughput and a 34× lower median TTFT than static batching, at the cost of slower long requests. On uniform lengths, static batching keeps higher throughput. See [Benchmarks](#benchmarks).
 
 **Concepts:** Iteration-level scheduling, streaming RPC, slot management, GPU utilization optimization
 
@@ -403,7 +544,8 @@ Advanced but extremely relevant to current LLM infrastructure.
   "tokens_generated": 42,
   "inference_time_ms": 850,
   "queue_time_ms": 12,
-  "total_time_ms": 870
+  "total_time_ms": 870,
+  "ttft_ms": 95
 }
 ```
 
@@ -442,20 +584,6 @@ Returns 200 `{"status": "ok"}` when the gRPC connection to the worker is ready, 
 ```
 
 `in_flight` counts requests past the rate limiter that haven't been answered, queued ones included. `engine` is the worker's latest step stats; it appears only in continuous mode while an engine stream is live.
-
-## Benchmarking
-
-`bench/loadtest.go` runs a fixed number of concurrent clients against the server and reports latency percentiles (p50/p95/p99), goodput, and counts of 429s, timeouts, and 5xx errors. It can sweep several concurrency levels in one run.
-
-```bash
-# One level: 50 concurrent clients, 1000 requests
-go run bench/loadtest.go -concurrency 50 -totalRequest 1000
-
-# Sweep concurrency levels, 20 requests per client at each level
-go run bench/loadtest.go -sweep 1,10,50,100,500 -requestsPerWorker 20
-```
-
-Each level appends a summary row to `bench/results/runs.csv`. While it runs, it polls `GET /stats` every `-statsInterval` (default 100ms) and writes the samples to `bench/results/stats.csv`, which gives queue depth and engine occupancy over time.
 
 ## How This Compares to Production Systems
 
