@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	inferencepb "github.com/yashp5/inference-engine/gen"
+	"github.com/yashp5/inference-engine/internal/pipeline"
 	"github.com/yashp5/inference-engine/internal/queue"
 	"github.com/yashp5/inference-engine/internal/types"
 	"google.golang.org/grpc"
@@ -19,11 +20,11 @@ import (
 )
 
 type Handler struct {
-	inferClient   inferencepb.InferenceClient
-	conn          *grpc.ClientConn
-	priorityQueue *queue.PriorityQueue
-	rateLimiter   RateLimiter
-	inflight      atomic.Int64
+	inferClient inferencepb.InferenceClient
+	conn        *grpc.ClientConn
+	p           *pipeline.Pipeline
+	rateLimiter RateLimiter
+	inflight    atomic.Int64
 	// queueTimeout bounds time-to-admission and is enforced by the dispatcher.
 	// requestTimeout bounds the whole request, generation included, and is the
 	// deadline on req.Ctx. Keeping them separate matters: req.Ctx.Done() is what
@@ -32,19 +33,17 @@ type Handler struct {
 	queueTimeout   time.Duration
 	requestTimeout time.Duration
 	agingInterval  time.Duration
-	engineStats    func() *types.EngineStats // nil when not in continuous batching mode
 }
 
-func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, pq *queue.PriorityQueue, queueTimeout time.Duration, requestTimeout time.Duration, agingInterval time.Duration, engineStats func() *types.EngineStats) *Handler {
+func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, p *pipeline.Pipeline, queueTimeout time.Duration, requestTimeout time.Duration, agingInterval time.Duration) *Handler {
 	return &Handler{
 		inferClient:    inferClient,
 		conn:           conn,
+		p:              p,
 		rateLimiter:    r,
-		priorityQueue:  pq,
 		queueTimeout:   queueTimeout,
 		requestTimeout: requestTimeout,
 		agingInterval:  agingInterval,
-		engineStats:    engineStats,
 	}
 }
 
@@ -80,11 +79,11 @@ func clientKey(r *http.Request) string {
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	resp := types.StatsResponse{
-		QueueDepth: h.priorityQueue.Len(),
+		QueueDepth: h.p.Pq.Len(),
 		InFlight:   h.inflight.Load(),
 	}
-	if h.engineStats != nil {
-		resp.Engine = h.engineStats()
+	if h.p.EngineStats != nil {
+		resp.Engine = h.p.EngineStats()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -147,7 +146,7 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 		ReceivedAt:    receivedAt,
 	}
 	req.EnqueuedAt = time.Now()
-	err = h.priorityQueue.Push(req)
+	err = h.p.Submit(req)
 	if errors.Is(err, queue.ErrQueueFull) {
 		w.Header().Set("Retry-After", "1")
 		writeJSON(w, http.StatusTooManyRequests, types.ErrorResponse{RequestId: requestId, Error: "queue full"})

@@ -25,6 +25,17 @@ type Config struct {
 	RateLimitSweepInterval time.Duration
 }
 
+type PipelineConfig struct {
+	ContinuousBatching bool
+	EngineSlots        int
+	MaxBatchSize       int
+	MaxBatchWait       time.Duration
+	WorkerCount        int
+	MaxInflight        int
+	MaxQueueDepth      int
+	QueueTimeout       time.Duration
+}
+
 func Load() *Config {
 	httpAddr := flag.String("httpAddr", "127.0.0.1:8080", "go server http address")
 	workerAddr := flag.String("workerAddr", "127.0.0.1:50051", "python server grpc address")

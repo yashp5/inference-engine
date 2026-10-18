@@ -10,12 +10,8 @@ import (
 	"time"
 
 	"github.com/yashp5/inference-engine/internal/api"
-	"github.com/yashp5/inference-engine/internal/batcher"
 	"github.com/yashp5/inference-engine/internal/config"
-	"github.com/yashp5/inference-engine/internal/dispatcher"
-	"github.com/yashp5/inference-engine/internal/queue"
-	"github.com/yashp5/inference-engine/internal/scheduler"
-	"github.com/yashp5/inference-engine/internal/types"
+	"github.com/yashp5/inference-engine/internal/pipeline"
 	"github.com/yashp5/inference-engine/internal/worker"
 )
 
@@ -38,29 +34,20 @@ func main() {
 	}
 	r := api.NewRateLimiter(ctx, "TOKEN_BUCKET", rateLimitN, cfg.RateLimitWindow, cfg.RateLimitBucketTTL, cfg.RateLimitSweepInterval)
 	log.Printf("rate limiter: enabled=%t n=%d window=%s", cfg.RateLimit, cfg.RateLimitN, cfg.RateLimitWindow)
-	pq := queue.NewPriorityQueue(cfg.MaxQueueDepth, cfg.QueueTimeout)
 
-	reqCh := make(chan *types.InferRequest)
-	dispatcher.NewDispatcher(pq, reqCh).Start(ctx)
-
-	// nil in static mode: only the engine stream produces step stats
-	var engineStats func() *types.EngineStats
-	if cfg.ContinuousBatching {
-		// The dispatcher feeds the engine directly. Batching now happens inside
-		// the worker's step loop, so a Batcher here would be pure added latency.
-		engine := scheduler.NewEngine(inferClient, reqCh, cfg.EngineSlots)
-		engine.Start(ctx)
-		engineStats = engine.Stats
-		log.Printf("scheduler: continuous batching, engineSlots=%d", cfg.EngineSlots)
-	} else {
-		batchedReqCh := make(chan types.Batch)
-		batcher.NewBatcher(reqCh, batchedReqCh, cfg.MaxBatchSize, cfg.MaxBatchWait).Start(ctx)
-		scheduler.NewScheduler(inferClient, batchedReqCh, cfg.WorkerCount, cfg.MaxInflight).Start(ctx)
-		log.Printf("scheduler: static batching, maxBatchSize=%d workerCount=%d maxInFlight=%d",
-			cfg.MaxBatchSize, cfg.WorkerCount, cfg.MaxInflight)
+	pipelineCfg := config.PipelineConfig{
+		ContinuousBatching: cfg.ContinuousBatching,
+		EngineSlots:        cfg.EngineSlots,
+		MaxBatchSize:       cfg.MaxBatchSize,
+		MaxBatchWait:       cfg.MaxBatchWait,
+		WorkerCount:        cfg.WorkerCount,
+		MaxInflight:        cfg.MaxInflight,
+		MaxQueueDepth:      cfg.MaxQueueDepth,
+		QueueTimeout:       cfg.QueueTimeout,
 	}
+	p := pipeline.New(ctx, inferClient, pipelineCfg)
 
-	h := api.NewHandler(inferClient, conn, r, pq, cfg.QueueTimeout, cfg.RequestTimeout, cfg.AgingInterval, engineStats)
+	h := api.NewHandler(inferClient, conn, r, p, cfg.QueueTimeout, cfg.RequestTimeout, cfg.AgingInterval)
 	mux := api.NewMux(h)
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
@@ -74,4 +61,5 @@ func main() {
 	defer cancel()
 
 	srv.Shutdown(ctx)
+	p.Close()
 }
