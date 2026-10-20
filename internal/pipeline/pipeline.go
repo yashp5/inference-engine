@@ -14,14 +14,15 @@ import (
 )
 
 type Pipeline struct {
-	Pq          *queue.PriorityQueue
-	EngineStats func() *types.EngineStats
-	Cancel      context.CancelFunc
+	pq          *queue.PriorityQueue
+	engineStats func() *types.EngineStats
+	cancel      context.CancelFunc
 }
 
 func New(ctx context.Context, inferClient inferencepb.InferenceClient, cfg config.PipelineConfig) *Pipeline {
-	pq := queue.NewPriorityQueue(cfg.MaxQueueDepth, cfg.QueueTimeout)
+	ctx, cancel := context.WithCancel(ctx)
 
+	pq := queue.NewPriorityQueue(cfg.MaxQueueDepth, cfg.QueueTimeout)
 	reqCh := make(chan *types.InferRequest)
 	dispatcher.NewDispatcher(pq, reqCh).Start(ctx)
 
@@ -42,18 +43,29 @@ func New(ctx context.Context, inferClient inferencepb.InferenceClient, cfg confi
 			cfg.MaxBatchSize, cfg.WorkerCount, cfg.MaxInflight)
 	}
 
-	_, cancel := context.WithCancel(ctx)
 	return &Pipeline{
-		Pq:          pq,
-		EngineStats: engineStats,
-		Cancel:      cancel,
+		pq:          pq,
+		engineStats: engineStats,
+		cancel:      cancel,
 	}
 }
 
 func (p *Pipeline) Submit(req *types.InferRequest) error {
-	return p.Pq.Push(req)
+	return p.pq.Push(req)
+}
+
+func (p *Pipeline) QueueDepth() int {
+	return p.pq.Len()
+}
+
+// EngineStats is nil in static mode and before the engine's first step
+func (p *Pipeline) EngineStats() *types.EngineStats {
+	if p.engineStats == nil {
+		return nil
+	}
+	return p.engineStats()
 }
 
 func (p *Pipeline) Close() {
-	p.Cancel()
+	p.cancel()
 }

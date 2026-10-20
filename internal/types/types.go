@@ -15,6 +15,7 @@ const maxTokensUpperBound = 4096
 var ErrQueueTimeout = errors.New("queue timeout")
 
 type CompletionsRequest struct {
+	Model       string  `json:"model"`
 	RequestId   string  `json:"request_id"`
 	Prompt      string  `json:"prompt"`
 	MaxTokens   int     `json:"max_tokens"`
@@ -46,8 +47,10 @@ func (r *CompletionsRequest) Validate() string {
 }
 
 type CompletionsReponse struct {
+	Model           string `json:"model"`
 	RequestId       string `json:"request_id"`
 	GeneratedText   string `json:"generated_text"`
+	LoadWaitMs      int    `json:"load_wait_ms"`
 	TokensGenerated int    `json:"tokens_generated"`
 	InferenceTimeMs int    `json:"inference_time_ms"`
 	QueueTimeMs     int    `json:"queue_time_ms"`
@@ -72,8 +75,14 @@ const (
 // past the rate limiter and not yet answered, so it includes whatever is still
 // sitting in the queue: InFlight-QueueDepth is roughly what the workers are on.
 type StatsResponse struct {
+	QueueDepth int                   `json:"queue_depth"` // summed across models
+	InFlight   int64                 `json:"in_flight"`
+	Engine     *EngineStats          `json:"engine,omitempty"` // default model, continuous batching only
+	Models     map[string]ModelStats `json:"models"`
+}
+
+type ModelStats struct {
 	QueueDepth int          `json:"queue_depth"`
-	InFlight   int64        `json:"in_flight"`
 	Engine     *EngineStats `json:"engine,omitempty"` // continuous batching only
 }
 

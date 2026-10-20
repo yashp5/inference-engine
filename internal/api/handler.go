@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -11,18 +12,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	inferencepb "github.com/yashp5/inference-engine/gen"
-	"github.com/yashp5/inference-engine/internal/pipeline"
 	"github.com/yashp5/inference-engine/internal/queue"
+	"github.com/yashp5/inference-engine/internal/registry"
 	"github.com/yashp5/inference-engine/internal/types"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 )
 
 type Handler struct {
-	inferClient inferencepb.InferenceClient
-	conn        *grpc.ClientConn
-	p           *pipeline.Pipeline
+	reg         *registry.Registry
 	rateLimiter RateLimiter
 	inflight    atomic.Int64
 	// queueTimeout bounds time-to-admission and is enforced by the dispatcher.
@@ -35,11 +32,9 @@ type Handler struct {
 	agingInterval  time.Duration
 }
 
-func NewHandler(inferClient inferencepb.InferenceClient, conn *grpc.ClientConn, r RateLimiter, p *pipeline.Pipeline, queueTimeout time.Duration, requestTimeout time.Duration, agingInterval time.Duration) *Handler {
+func NewHandler(r RateLimiter, reg *registry.Registry, queueTimeout time.Duration, requestTimeout time.Duration, agingInterval time.Duration) *Handler {
 	return &Handler{
-		inferClient:    inferClient,
-		conn:           conn,
-		p:              p,
+		reg:            reg,
 		rateLimiter:    r,
 		queueTimeout:   queueTimeout,
 		requestTimeout: requestTimeout,
@@ -53,10 +48,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// Healthz tracks the default model only: once models load on demand, a
+// non-default model being down is normal and shouldn't fail the health check.
 func (h *Handler) Healthz(w http.ResponseWriter, r *http.Request) {
-	state := h.conn.GetState()
+	state := h.reg.DefaultConnState()
 	if state == connectivity.Idle {
-		h.conn.Connect()
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "worker_not_ready"})
 		return
 	}
@@ -78,12 +74,15 @@ func clientKey(r *http.Request) string {
 }
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	models := h.reg.Stats()
 	resp := types.StatsResponse{
-		QueueDepth: h.p.Pq.Len(),
-		InFlight:   h.inflight.Load(),
+		InFlight: h.inflight.Load(),
+		// top-level engine keeps the pre-multi-model shape for existing callers
+		Engine: models[h.reg.Resolve("")].Engine,
+		Models: models,
 	}
-	if h.p.EngineStats != nil {
-		resp.Engine = h.p.EngineStats()
+	for _, m := range models {
+		resp.QueueDepth += m.QueueDepth
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -124,6 +123,19 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.requestTimeout)
 	defer cancel()
 
+	lease, err := h.reg.Acquire(ctx, reqBody.Model)
+	if err != nil {
+		if errors.Is(err, registry.ErrUnknownModel) {
+			writeJSON(w, http.StatusNotFound, types.ErrorResponse{RequestId: requestId, Error: fmt.Sprintf("unknown model %q", reqBody.Model)})
+		} else {
+			writeJSON(w, http.StatusServiceUnavailable, types.ErrorResponse{RequestId: requestId, Error: err.Error()})
+		}
+		return
+	}
+	defer lease.Release()
+	// carry the resolved name, so queue/scheduler logs never see ""
+	reqBody.Model = lease.Model
+
 	var priority types.Priority
 	switch reqBody.Priority {
 	case "low":
@@ -146,7 +158,7 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 		ReceivedAt:    receivedAt,
 	}
 	req.EnqueuedAt = time.Now()
-	err = h.p.Submit(req)
+	err = lease.Pipeline.Submit(req)
 	if errors.Is(err, queue.ErrQueueFull) {
 		w.Header().Set("Retry-After", "1")
 		writeJSON(w, http.StatusTooManyRequests, types.ErrorResponse{RequestId: requestId, Error: "queue full"})
@@ -167,6 +179,7 @@ func (h *Handler) Completions(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, status, types.ErrorResponse{RequestId: requestId, Error: resp.Error.Error()})
 			return
 		}
+		resp.Body.Model = lease.Model
 		resp.Body.TotalTimeMs = int(time.Since(req.ReceivedAt).Milliseconds())
 		writeJSON(w, http.StatusOK, resp.Body)
 	}

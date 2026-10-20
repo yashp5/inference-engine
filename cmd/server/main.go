@@ -11,21 +11,13 @@ import (
 
 	"github.com/yashp5/inference-engine/internal/api"
 	"github.com/yashp5/inference-engine/internal/config"
-	"github.com/yashp5/inference-engine/internal/pipeline"
-	"github.com/yashp5/inference-engine/internal/worker"
+	"github.com/yashp5/inference-engine/internal/registry"
 )
 
 func main() {
 	cfg := config.Load()
 
 	ctx := context.Background()
-
-	inferClient, conn, err := worker.New(cfg.WorkerAddr)
-	if err != nil {
-		panic(err)
-	}
-	conn.Connect()
-	defer conn.Close()
 
 	// N=0 is NewRateLimiter's off switch: it returns the no-op limiter
 	rateLimitN := 0
@@ -35,19 +27,23 @@ func main() {
 	r := api.NewRateLimiter(ctx, "TOKEN_BUCKET", rateLimitN, cfg.RateLimitWindow, cfg.RateLimitBucketTTL, cfg.RateLimitSweepInterval)
 	log.Printf("rate limiter: enabled=%t n=%d window=%s", cfg.RateLimit, cfg.RateLimitN, cfg.RateLimitWindow)
 
-	pipelineCfg := config.PipelineConfig{
-		ContinuousBatching: cfg.ContinuousBatching,
-		EngineSlots:        cfg.EngineSlots,
-		MaxBatchSize:       cfg.MaxBatchSize,
-		MaxBatchWait:       cfg.MaxBatchWait,
-		WorkerCount:        cfg.WorkerCount,
-		MaxInflight:        cfg.MaxInflight,
-		MaxQueueDepth:      cfg.MaxQueueDepth,
-		QueueTimeout:       cfg.QueueTimeout,
+	catalog := registry.LegacyCatalog(cfg)
+	if cfg.Models != "" {
+		var err error
+		catalog, err = registry.LoadCatalog(cfg.Models, cfg.DefaultModel)
+		if err != nil {
+			log.Fatalf("load catalog %s: %v", cfg.Models, err)
+		}
 	}
-	p := pipeline.New(ctx, inferClient, pipelineCfg)
+	reg, err := registry.New(ctx, catalog, cfg)
+	if err != nil {
+		log.Fatalf("build registry: %v", err)
+	}
+	for _, m := range catalog {
+		log.Printf("model %q: worker=%s continuous=%t", m.Name, m.WorkerAddr, m.ContinuousBatching)
+	}
 
-	h := api.NewHandler(inferClient, conn, r, p, cfg.QueueTimeout, cfg.RequestTimeout, cfg.AgingInterval)
+	h := api.NewHandler(r, reg, cfg.QueueTimeout, cfg.RequestTimeout, cfg.AgingInterval)
 	mux := api.NewMux(h)
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
@@ -61,5 +57,5 @@ func main() {
 	defer cancel()
 
 	srv.Shutdown(ctx)
-	p.Close()
+	reg.Close()
 }

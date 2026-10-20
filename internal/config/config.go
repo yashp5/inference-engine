@@ -6,7 +6,9 @@ import (
 )
 
 type Config struct {
-	HTTPAddr               string        // 127.0.0.1:8080
+	HTTPAddr               string // 127.0.0.1:8080
+	Models                 string
+	DefaultModel           string
 	WorkerAddr             string        // 127.0.0.1:50051
 	MaxQueueDepth          int           // step 4: 429 past this
 	QueueTimeout           time.Duration // time-to-admission bound: 504 past this
@@ -38,6 +40,8 @@ type PipelineConfig struct {
 
 func Load() *Config {
 	httpAddr := flag.String("httpAddr", "127.0.0.1:8080", "go server http address")
+	models := flag.String("models", "", "model catalog JSON; empty = single model from -workerAddr")
+	defaultModel := flag.String("defaultModel", "default", "catalog name used when a request has no model field")
 	workerAddr := flag.String("workerAddr", "127.0.0.1:50051", "python server grpc address")
 	maxQueueDepth := flag.Int("maxQueueDepth", 1000, "max request queue depth")
 	queueTimeout := flag.Duration("queueTimeout", 5*time.Second, "max time a request may wait for admission")
@@ -58,6 +62,8 @@ func Load() *Config {
 
 	return &Config{
 		HTTPAddr:               *httpAddr,
+		Models:                 *models,
+		DefaultModel:           *defaultModel,
 		WorkerAddr:             *workerAddr,
 		MaxQueueDepth:          *maxQueueDepth,
 		QueueTimeout:           *queueTimeout,
